@@ -82,7 +82,6 @@ Installs: Docker (+ Compose plugin), Node.js, nvm, Go, mkcert, cosign. Also adds
 
 #### 2. /etc/hosts entry
 
-> Skip if you ran a `*_prereqs.sh` script — it handles this automatically.
 
 DSP and Keycloak use TLS certificates issued for `local-dsp.virtru.com`. Add this line to `/etc/hosts` (requires `sudo`):
 
@@ -350,7 +349,7 @@ Expected output:
 docker exec virtru-dsp-only-dsp-db-1 psql -U postgres -d opentdf -c "\dt dsp_policy.*"
 
 # Keycloak database
-docker exec virtru-dsp-only-keycloak-db-1 psql -U postgres -d keycloak -c "\dt"
+docker exec virtru-dsp-only-keycloak-db-1 psql -U postgres -d keycloak -c "\dt *"
 ```
 
 ---
