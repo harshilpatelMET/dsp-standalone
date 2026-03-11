@@ -2,6 +2,8 @@
 
 Runs the Virtru Data Security Platform (DSP) as a self-contained Docker Compose stack — no Kubernetes or bulk data ingestion. Intended to support local SDK development and testing.
 
+NOTE: This setup instance uses default usernames and credentials and should not be used for any purpose beyond local integration development and testing.
+
 ## What's Included
 
 | Service | Image | Port(s) | Role |
@@ -613,6 +615,15 @@ Expected output confirms the user carries the correct IdP attributes:
 > DSP maps these Keycloak attributes to DSP attribute values via the subject condition sets in `sample.federal_policy.yaml`. A user with `clearance: S` and `nationality: AUS` will be entitled to `classification/secret` (and below) and `relto/fvey` (since AUS is a Five Eyes member).
 
 ---
+
+**Option C — Use Keycloak UI**
+
+The Keycloak UI allows admins to create new users and authorizations/accesses/entitlements.
+
+Browse to `https://local-dsp.virtru.com:18443/auth/admin` 
+
+Login with the default credentials for Keycloak admin and create the user. Please refer to Keycloak administration guide: `https://www.keycloak.org/docs/latest/server_admin/index.html`
+
 
 ### Adding a New Attribute Value to an Existing Attribute
 
