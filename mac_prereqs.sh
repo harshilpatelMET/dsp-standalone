@@ -50,6 +50,23 @@ else
 fi
 
 # ------------------------------------------------------------
+# Docker Compose                                                                                                                                
+# ------------------------------------------------------------
+echo "=== Checking Docker Compose ==="
+if ! docker compose version &> /dev/null; then
+   echo "Docker Compose plugin not found — installing..."
+   brew install docker-compose
+   # Register as a Docker CLI plugin
+   mkdir -p ~/.docker/cli-plugins
+   ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+else
+   echo "Docker Compose already installed — $(docker compose version)"
+fi
+
+
+
+
+# ------------------------------------------------------------
 # Node.js (LTS) + nvm
 # ------------------------------------------------------------
 echo "=== Installing Node.js (LTS) ==="

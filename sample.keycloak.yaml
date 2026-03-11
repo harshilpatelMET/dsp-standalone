@@ -222,8 +222,6 @@ realms:
             - BBB
           clearance:
             - TS
-        groups:
-          - mygroup
         realmRoles:
           - opentdf-standard
     token_exchanges:

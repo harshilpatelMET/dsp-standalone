@@ -42,6 +42,19 @@ if ! command -v docker &> /dev/null; then
   sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
+# ------------------------------------------------------------
+# Docker Compose
+# ------------------------------------------------------------
+echo "=== Checking Docker Compose ==="
+if ! docker compose version &> /dev/null; then
+  echo "Docker Compose plugin not found — installing..."
+  sudo apt update -y
+  sudo apt install -y docker-compose-plugin
+else
+  echo "Docker Compose already installed — $(docker compose version)"
+fi
+
+
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$USER"
 
