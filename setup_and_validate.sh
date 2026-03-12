@@ -260,25 +260,31 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     echo "    └── dsp   (the DSP CLI binary)"
     echo
 
-    BUNDLE_DIR=""
-    while true; do
-      read -rp "  Enter path to the unpacked Virtru DSP bundle directory: " BUNDLE_DIR
-      BUNDLE_DIR="${BUNDLE_DIR/#\~/$HOME}"   # expand leading ~
-      if [[ -z "$BUNDLE_DIR" ]]; then
-        echo "  Path cannot be empty."
-        continue
-      fi
-      if [[ ! -d "$BUNDLE_DIR" ]]; then
-        echo "  Directory not found: $BUNDLE_DIR"
-        continue
-      fi
-      if [[ ! -x "$BUNDLE_DIR/dsp" ]]; then
-        echo "  'dsp' binary not found or not executable in $BUNDLE_DIR"
-        echo "  Make sure you have unpacked the bundle and that 'dsp' exists at its root."
-        continue
-      fi
-      break
-    done
+    # If the prereqs script already unpacked the bundle, use it automatically
+    if [[ -x "$SCRIPT_DIR/virtru-dsp-bundle/dsp" ]]; then
+      BUNDLE_DIR="$SCRIPT_DIR/virtru-dsp-bundle"
+      log_info "Using bundle unpacked by prereqs: $BUNDLE_DIR"
+    else
+      BUNDLE_DIR=""
+      while true; do
+        read -rp "  Enter path to the unpacked Virtru DSP bundle directory: " BUNDLE_DIR
+        BUNDLE_DIR="${BUNDLE_DIR/#\~/$HOME}"   # expand leading ~
+        if [[ -z "$BUNDLE_DIR" ]]; then
+          echo "  Path cannot be empty."
+          continue
+        fi
+        if [[ ! -d "$BUNDLE_DIR" ]]; then
+          echo "  Directory not found: $BUNDLE_DIR"
+          continue
+        fi
+        if [[ ! -x "$BUNDLE_DIR/dsp" ]]; then
+          echo "  'dsp' binary not found or not executable in $BUNDLE_DIR"
+          echo "  Make sure you have unpacked the bundle and that 'dsp' exists at its root."
+          continue
+        fi
+        break
+      done
+    fi
 
     log_info "Loading DSP images from bundle: $BUNDLE_DIR"
     (cd "$BUNDLE_DIR" && ./dsp copy-images --insecure localhost:5000/virtru)

@@ -104,6 +104,7 @@ services:
   # Provision Keycloak: realm, clients, and users from sample.keycloak.yaml
   #----------------------------------------------------------------
   dsp-keycloak-provisioning:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
@@ -142,6 +143,7 @@ services:
   # DSP service (KAS, policy, entity resolution, authorization)
   #----------------------------------------------------------------
   dsp:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
@@ -178,6 +180,7 @@ services:
   # Provision DSP with the federal attribute policy
   #----------------------------------------------------------------
   dsp-provision-federal-policy:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
