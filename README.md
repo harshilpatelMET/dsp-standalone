@@ -52,6 +52,17 @@ The script will:
 | *(none)* | Full run: prereqs → keys → stack → validate |
 | `--skip-prereqs` | Skip tool installation; still validates tools are present |
 | `--validate-only` | Run validation checks only against an already-running stack |
+| `--sdk-validation` | After stack validation, build and run the three Go SDK test programs |
+
+Flags can be combined:
+
+```bash
+# Validate a running stack AND run SDK tests
+./setup_and_validate.sh --validate-only --sdk-validation
+
+# Full run including SDK tests
+./setup_and_validate.sh --sdk-validation
+```
 
 > **Ubuntu note:** After running `ubuntu_prereqs.sh` for the first time, Docker group membership requires a logout/login (or `newgrp docker`) before Docker commands work without `sudo`. If `setup_and_validate.sh` reports the Docker daemon is unreachable on Linux, log out and back in, then re-run with `--skip-prereqs`.
 
@@ -270,6 +281,44 @@ If you used `setup_and_validate.sh` for setup, validation runs automatically at 
 ```
 
 The script runs all checks below and prints a pass/fail summary.
+
+#### SDK validation (`--sdk-validation`)
+
+Add `--sdk-validation` to also run the three Go SDK test programs as part of the validation suite. This exercises the full encrypt/decrypt path end-to-end against the live stack:
+
+```bash
+# Validate stack + run Go SDK tests
+./setup_and_validate.sh --validate-only --sdk-validation
+```
+
+The SDK validation step does the following in order:
+
+| Step | Program | What it tests |
+|---|---|---|
+| 1 | `go mod tidy` | Dependencies can be fetched |
+| 2 | `toySDK.go` | Alex (TS/USA) can encrypt plaintext into a TDF and decrypt it back |
+| 3 | `bobTestAlexFile.go` | Bob (TS/GBR) can decrypt Alex's TDF via FVEY membership |
+| 4 | `aliceTestAlexFile.go` | Alice (S/USA) is correctly denied access to a Top Secret TDF |
+
+Each program's full output is printed inside a labeled box so it is visually distinct from the setup script's own status lines:
+
+```
+    ┌─ toySDK.go output ──────────────────────────────────────────
+    │  ...
+    └───────────────────────────────────────────────────────────
+
+    ✓ toySDK.go: Alex successfully encrypted and decrypted the TDF
+```
+
+Results feed into the same pass/fail counters as all other checks and appear in the final summary. The `aliceTestAlexFile.go` step counts as a **pass** when access is correctly denied — a failure there means a policy misconfiguration, not a code error.
+
+**Prerequisites for SDK validation:**
+
+| Requirement | Notes |
+|---|---|
+| Go installed | `brew install go` (macOS) or see `ubuntu_prereqs.sh` |
+| DSP stack running and healthy | Stack validation checks must pass first |
+| `opentdf-public` client has Direct Access Grants enabled | Set in `sample.keycloak.yaml` — stack must have been provisioned with this enabled |
 
 ---
 
@@ -852,6 +901,8 @@ Changes to either file require re-running the corresponding provisioning contain
 ---
 
 ## SDK Examples
+
+The three Go programs below can be run individually (see each section) or all together via `setup_and_validate.sh --sdk-validation`. Running them through the setup script handles dependency fetching, executes them in the correct order, and includes their results in the overall pass/fail summary.
 
 ### toySDK.go
 
