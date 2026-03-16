@@ -373,17 +373,29 @@ for svc in keycloak-db keycloak dsp-db dsp; do
   fi
 done
 
-sleep 5
+  # Wait for one-shot provisioning containers to reach Exited (0)
+  log_info "Check 1b: Waiting for provisioning containers to complete"
 
-#for svc in dsp-keycloak-provisioning dsp-provision-federal-policy; do
-#  EXIT_CODE=$(docker compose ps "$svc" 2>/dev/null | grep -oE 'Exited \(\K[0-9]+' || echo "unknown")
-#  if [[ "$EXIT_CODE" == "0" ]]; then
-#    check_pass "$svc exited cleanly (0)"
-#  else
-#    check_fail "$svc exit code: $EXIT_CODE (expected 0)"
-#    ERRORS+=("$svc did not complete successfully")
-#  fi
-#done
+  for svc in dsp-keycloak-provisioning dsp-provision-federal-policy; do
+    MAX_ATTEMPTS=5
+    ATTEMPT=0
+    PROVISIONED=false
+    while [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      if docker compose ps "$svc" 2>/dev/null | grep -q "Exited (0)"; then
+        check_pass "$svc completed successfully"
+        PROVISIONED=true
+        break
+      fi
+      log_info "$svc not yet done (attempt $ATTEMPT/$MAX_ATTEMPTS) — waiting 10s..."
+      sleep 10
+    done
+    if [[ "$PROVISIONED" == false ]]; then
+      log_warn "$svc did not reach Exited (0) after $MAX_ATTEMPTS attempts — continuing with warning"
+      log_warn "Validation checks may fail if provisioning is still in progress."
+      log_warn "To inspect: docker compose logs $svc"
+    fi
+  done
 
 # --- 2. DSP health endpoint -------------------------------------------------
 log_info "Check 2: DSP health endpoint"
