@@ -848,3 +848,199 @@ curl -ks -X POST \
 | `sample.federal_policy.yaml` | Defines DSP attribute namespaces, definitions, values, subject mappings, and subject condition sets. Consumed by `dsp-provision-federal-policy`. |
 
 Changes to either file require re-running the corresponding provisioning container (or a full stack restart) to take effect.
+
+---
+
+## SDK Examples
+
+### toySDK.go
+
+A Go smoke test that exercises the full TDF encrypt/decrypt round-trip against the local DSP stack using the [OpenTDF platform SDK](https://github.com/opentdf/platform).
+
+#### What it does
+
+1. Authenticates as **Alex** (`aaa@topsecret.usa`, TS/USA) using the Resource Owner Password Credentials (ROPC) flow via the `opentdf-public` Keycloak client
+2. Prints the plaintext content and its Shannon entropy
+3. Encrypts the plaintext into a TDF with the following attributes:
+   - `classification/topsecret`
+   - `relto/usa`
+   - `relto/fvey`
+4. Saves the encrypted TDF to `alex_test.tdf`
+5. Prints a hex dump (first 256 bytes) and Shannon entropy of the encrypted content to confirm it is opaque binary data (~8.0 bits/byte)
+6. Decrypts the TDF and prints the recovered plaintext to verify the round-trip
+
+#### Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| DSP stack running | `docker compose up --build` |
+| Go installed | `brew install go` (macOS) or see `ubuntu_prereqs.sh` |
+| `GOPRIVATE` set | `go env -w GOPRIVATE=github.com/virtru-corp/*` |
+| Dependencies fetched | `go mod tidy` |
+
+#### Run
+
+```bash
+# Without building
+go run toySDK.go
+
+# Or build first, then run
+go build -o toySDK toySDK.go
+./toySDK
+```
+
+#### Expected output
+
+```
+========================================
+PLAINTEXT CONTENT:
+========================================
+TOP SECRET
+<random 140-char string>
+TOP SECRET
+
+Plaintext entropy: 4.XXXX bits/byte
+
+TDF written to: alex_test.tdf (XXXX bytes)
+
+========================================
+ENCRYPTED CONTENT (hex dump, first 256 bytes):
+========================================
+00000000  50 4b 03 04 ...
+...
+
+Encrypted entropy: 7.XXXX bits/byte (close to 8.0 = well encrypted)
+
+========================================
+DECRYPTED CONTENT:
+========================================
+TOP SECRET
+<random 140-char string>
+TOP SECRET
+
+SUCCESS: TDF created, saved, and decrypted successfully
+```
+
+#### Output file
+
+| File | Description |
+|---|---|
+| `alex_test.tdf` | The encrypted TDF written to the current directory |
+
+---
+
+### bobTestAlexFile.go
+
+A Go test that verifies cross-user TDF decryption. Bob (TS/GBR) attempts to decrypt `alex_test.tdf` — the TDF created by `toySDK.go` as Alex (TS/USA).
+
+#### Why Bob can decrypt Alex's file
+
+Alex's TDF is protected with:
+- `classification/topsecret` — Bob holds TS clearance ✓
+- `relto/usa` — Bob is not USA
+- `relto/fvey` — GBR is a Five Eyes member ✓
+
+The `relto` attribute uses an **ANY_OF** rule, so Bob only needs to satisfy one value. Since he holds `relto/fvey`, access is granted.
+
+#### Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| DSP stack running | `docker compose up --build` |
+| `alex_test.tdf` exists | Run `toySDK.go` first |
+| Go installed | `brew install go` (macOS) or see `ubuntu_prereqs.sh` |
+| Dependencies fetched | `go mod tidy` |
+
+#### Run
+
+```bash
+# Run toySDK.go first to generate alex_test.tdf
+go run toySDK.go
+
+# Then run Bob's decryption test
+go run bobTestAlexFile.go
+```
+
+#### Expected output
+
+```
+========================================
+DECRYPTED CONTENT:
+========================================
+TOP SECRET
+<random 140-char string>
+TOP SECRET
+
+SUCCESS: Bob successfully decrypted Alex's file
+```
+
+#### Failure cases
+
+| Failure message | Cause |
+|---|---|
+| `Could not open alex_test.tdf` | `toySDK.go` has not been run yet |
+| `Bob could not authenticate` | Keycloak not running or `opentdf-public` client not provisioned with `directAccessGrantsEnabled: true` |
+| `Bob was denied access (KAS rejected key unwrap)` | Bob's entitlements do not satisfy the TDF attributes — check subject mappings |
+| `Bob could not decrypt TDF content` | TDF file is corrupt or the DSP stack is unhealthy |
+
+---
+
+### aliceTestAlexFile.go
+
+A Go test that verifies access is correctly **denied** when a user's clearance is insufficient. Alice (S/USA) attempts to decrypt `alex_test.tdf` — the TDF created by `toySDK.go` as Alex (TS/USA).
+
+#### Why Alice cannot decrypt Alex's file
+
+Alex's TDF is protected with:
+- `classification/topsecret` — Alice only holds **Secret (S)** clearance ✗
+
+The `classification` attribute uses a **HIERARCHY** rule. Alice is entitled to `secret`, `confidential`, and `unclassified` — but not `topsecret`. KAS will reject her key unwrap request.
+
+> **Note:** This test reports `SUCCESS` when access is correctly denied. If Alice is somehow able to decrypt the file, the test reports `FAILURE` and prints the content — indicating a policy misconfiguration.
+
+#### Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| DSP stack running | `docker compose up --build` |
+| `alex_test.tdf` exists | Run `toySDK.go` first |
+| Go installed | `brew install go` (macOS) or see `ubuntu_prereqs.sh` |
+| Dependencies fetched | `go mod tidy` |
+
+#### Run
+
+```bash
+# Run toySDK.go first to generate alex_test.tdf
+go run toySDK.go
+
+# Then run Alice's access denial test
+go run aliceTestAlexFile.go
+```
+
+#### Expected output
+
+```
+========================================
+ACCESS DENIED (expected):
+========================================
+KAS rejected Alice's key unwrap request: <error detail>
+
+SUCCESS: Access correctly denied — Alice cannot decrypt a Top Secret file
+```
+
+#### Unexpected failure
+
+If Alice successfully decrypts the file the output will be:
+
+```
+========================================
+DECRYPTED CONTENT (should NOT have happened):
+========================================
+TOP SECRET
+<content>
+TOP SECRET
+
+FAILURE: Alice was able to decrypt a Top Secret file — check subject mappings and policy
+```
+
+This indicates a misconfiguration in the subject mappings or attribute hierarchy in `sample.federal_policy.yaml`. Re-run `docker compose run --rm dsp-provision-federal-policy` to reprovision the policy.
