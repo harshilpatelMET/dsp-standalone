@@ -8,8 +8,9 @@
 # Supports: macOS (Intel + Apple Silicon), Ubuntu/Debian Linux (amd64 + arm64)
 #
 # Usage:
-#   ./setup_and_validate.sh                              # full run
+#   ./setup_and_validate.sh                              # full run (with --build)
 #   ./setup_and_validate.sh --skip-prereqs               # skip tool installs, go straight to keys/stack
+#   ./setup_and_validate.sh --no-build                   # start stack using cached images (no --build)
 #   ./setup_and_validate.sh --validate-only              # validate a running stack (no setup)
 #   ./setup_and_validate.sh --sdk-validation             # also build and run Go SDK test programs
 #   ./setup_and_validate.sh --validate-only --sdk-validation  # validate + SDK tests only
@@ -23,11 +24,13 @@ set -euo pipefail
 SKIP_PREREQS=false
 VALIDATE_ONLY=false
 SDK_VALIDATION=false
+NO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
     --skip-prereqs)    SKIP_PREREQS=true ;;
     --validate-only)   VALIDATE_ONLY=true ;;
     --sdk-validation)  SDK_VALIDATION=true ;;
+    --no-build)        NO_BUILD=true ;;
   esac
 done
 
@@ -327,8 +330,13 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   log_section "Starting Docker Compose stack"
 
-  log_info "Running: docker compose up --build -d"
-  docker compose up --build -d
+  if [[ "$NO_BUILD" == true ]]; then
+    log_info "Running: docker compose up -d (--no-build: using cached images)"
+    docker compose up -d
+  else
+    log_info "Running: docker compose up --build -d"
+    docker compose up --build -d
+  fi
   log_ok "Stack started in detached mode"
 
   # Wait for DSP to become healthy
@@ -387,8 +395,8 @@ done
         PROVISIONED=true
         break
       fi
-      log_info "$svc not yet done (attempt $ATTEMPT/$MAX_ATTEMPTS) — waiting 10s..."
-      sleep 10
+      log_info "$svc not yet done (attempt $ATTEMPT/$MAX_ATTEMPTS) — waiting 15s..."
+      sleep 15
     done
     if [[ "$PROVISIONED" == false ]]; then
       log_warn "$svc did not reach Exited (0) after $MAX_ATTEMPTS attempts — continuing with warning"
