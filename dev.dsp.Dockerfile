@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Set your runtime image (override with --build-arg)
-ARG DSP_IMAGE=localhost:5000/virtru/data-security-platform:v2.7.1
+ARG DSP_IMAGE=localhost:5000/virtru/data-security-platform:v2.7.4
 
 # ---------- prep stage: build CA bundle & stage files ----------
 FROM alpine:latest AS prep
@@ -40,6 +40,10 @@ RUN test -f /work/samples/defaults/keycloak_data.yaml \
 
 # ---------- final stage ----------
 FROM ${DSP_IMAGE} AS dsp
+
+# Install curl for Docker health checks
+RUN apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null || \
+    apk add --no-cache curl 2>/dev/null || true
 
 # Copy only what’s needed; avoid copying the entire prep filesystem.
 COPY --from=prep /work/dsp-keys/           /dsp-keys/
