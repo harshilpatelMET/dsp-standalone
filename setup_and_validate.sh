@@ -14,6 +14,7 @@
 #   ./setup_and_validate.sh --validate-only              # validate a running stack (no setup)
 #   ./setup_and_validate.sh --sdk-validation             # also build and run Go SDK test programs
 #   ./setup_and_validate.sh --validate-only --sdk-validation  # validate + SDK tests only
+#   ./setup_and_validate.sh --sdk-only                   # run Go SDK tests only (skip infra checks)
 # =============================================================================
 
 set -euo pipefail
@@ -24,12 +25,14 @@ set -euo pipefail
 SKIP_PREREQS=false
 VALIDATE_ONLY=false
 SDK_VALIDATION=false
+SDK_ONLY=false
 NO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
     --skip-prereqs)    SKIP_PREREQS=true ;;
     --validate-only)   VALIDATE_ONLY=true ;;
     --sdk-validation)  SDK_VALIDATION=true ;;
+    --sdk-only)        SDK_ONLY=true; SDK_VALIDATION=true; VALIDATE_ONLY=true ;;
     --no-build)        NO_BUILD=true ;;
   esac
 done
@@ -324,24 +327,21 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 fi  # end prerequisites block
 
 # ---------------------------------------------------------------------------
-# Detect DSP image tag from registry
-# ---------------------------------------------------------------------------
-log_section "Detecting DSP image version"
-
-DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list 2>/dev/null \
-  | jq -r '.tags | sort | last' 2>/dev/null || echo "")
-
-if [[ -z "$DSP_TAG" || "$DSP_TAG" == "null" ]]; then
-  die "Could not detect DSP image tag from local registry.\nMake sure the registry is running and the image has been loaded."
-fi
-
-DSP_IMAGE="localhost:5000/virtru/data-security-platform:${DSP_TAG}"
-log_ok "DSP image: $DSP_IMAGE"
-
-# ---------------------------------------------------------------------------
-# Start the stack
+# Detect DSP image tag from registry + start the stack
 # ---------------------------------------------------------------------------
 if [[ "$VALIDATE_ONLY" == false ]]; then
+
+  log_section "Detecting DSP image version"
+
+  DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list 2>/dev/null \
+    | jq -r '.tags | sort | last' 2>/dev/null || echo "")
+
+  if [[ -z "$DSP_TAG" || "$DSP_TAG" == "null" ]]; then
+    die "Could not detect DSP image tag from local registry.\nMake sure the registry is running and the image has been loaded."
+  fi
+
+  DSP_IMAGE="localhost:5000/virtru/data-security-platform:${DSP_TAG}"
+  log_ok "DSP image: $DSP_IMAGE"
 
   log_section "Starting Docker Compose stack"
 
@@ -380,9 +380,12 @@ fi
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
-log_section "Running validation checks"
-
 ERRORS=()
+
+if [[ "$SDK_ONLY" == true ]]; then
+  log_section "Skipping infra checks (--sdk-only)"
+else
+  log_section "Running validation checks"
 
 # --- 1. Container status ----------------------------------------------------
 log_info "Check 1: Container status"
@@ -504,6 +507,8 @@ else
   check_fail "No tables found in Keycloak DB"
   ERRORS+=("Keycloak DB empty or missing")
 fi
+
+fi  # end infra checks (skipped when --sdk-only)
 
 # ---------------------------------------------------------------------------
 # SDK Validation (optional — requires --sdk-validation flag)

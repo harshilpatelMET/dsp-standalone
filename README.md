@@ -52,14 +52,18 @@ The script will:
 | *(none)* | Full run: prereqs → keys → build → stack → validate |
 | `--skip-prereqs` | Skip tool installation; still validates tools are present |
 | `--no-build` | Start stack using cached images — skips `docker compose build` (faster on repeat runs) |
-| `--validate-only` | Run validation checks only against an already-running stack |
-| `--sdk-validation` | After stack validation, build and run the three Go SDK test programs |
+| `--validate-only` | Run infra validation checks only against an already-running stack (no setup or start) |
+| `--sdk-validation` | After infra validation, build and run the three Go SDK test programs |
+| `--sdk-only` | Run the Go SDK tests only — skips all infra validation checks |
 
 Flags can be combined:
 
 ```bash
 # Validate a running stack AND run SDK tests
 ./setup_and_validate.sh --validate-only --sdk-validation
+
+# Run only the Go SDK tests (fastest — skips all infra checks)
+./setup_and_validate.sh --sdk-only
 
 # Full run including SDK tests
 ./setup_and_validate.sh --sdk-validation
@@ -308,13 +312,21 @@ If you used `setup_and_validate.sh` for setup, validation runs automatically at 
 
 The script runs all checks below and prints a pass/fail summary.
 
-#### SDK validation (`--sdk-validation`)
+#### SDK validation (`--sdk-validation` / `--sdk-only`)
 
-Add `--sdk-validation` to also run the three Go SDK test programs as part of the validation suite. This exercises the full encrypt/decrypt path end-to-end against the live stack:
+Two flags control Go SDK testing:
+
+| Flag | Infra checks | SDK tests |
+|---|---|---|
+| `--sdk-validation` | Yes | Yes |
+| `--sdk-only` | No | Yes |
 
 ```bash
 # Validate stack + run Go SDK tests
 ./setup_and_validate.sh --validate-only --sdk-validation
+
+# Run only the Go SDK tests (skip infra checks)
+./setup_and_validate.sh --sdk-only
 ```
 
 The SDK validation step does the following in order:
@@ -928,7 +940,13 @@ Changes to either file require re-running the corresponding provisioning contain
 
 ## SDK Examples
 
-The three Go programs below can be run individually (see each section) or all together via `setup_and_validate.sh --sdk-validation`. Running them through the setup script handles dependency fetching, executes them in the correct order, and includes their results in the overall pass/fail summary.
+The three Go programs below can be run individually (see each section) or all together via the setup script. Running them through the setup script handles dependency fetching, compiles each program before running it, executes them in the correct order, and includes their results in the overall pass/fail summary.
+
+| Command | What runs |
+|---|---|
+| `./setup_and_validate.sh --sdk-only` | Go SDK tests only (fastest) |
+| `./setup_and_validate.sh --validate-only --sdk-validation` | Infra checks + Go SDK tests |
+| `./setup_and_validate.sh --sdk-validation` | Full setup + infra checks + Go SDK tests |
 
 ### toySDK.go
 
