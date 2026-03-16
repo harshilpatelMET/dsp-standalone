@@ -509,6 +509,53 @@ if [[ "$SDK_VALIDATION" == "true" ]]; then
   else
     log_ok "Go found: $(go version)"
 
+    # --- Check / create go.mod -----------------------------------------------
+    log_info "Checking go.mod..."
+
+    GOMOD="$SDK_DIR/go.mod"
+    EXPECTED_MODULE="dsp-standalone"
+    EXPECTED_SDK="github.com/opentdf/platform/sdk v0.7.0"
+    EXPECTED_OAUTH="golang.org/x/oauth2"
+
+    GOMOD_OK=true
+
+    if [[ ! -f "$GOMOD" ]]; then
+      log_warn "go.mod not found — creating it"
+      GOMOD_OK=false
+    else
+      # Verify the module name and required direct dependencies are present
+      if ! grep -q "^module ${EXPECTED_MODULE}$" "$GOMOD"; then
+        log_warn "go.mod module name is not '${EXPECTED_MODULE}'"
+        GOMOD_OK=false
+      fi
+      if ! grep -q "${EXPECTED_SDK}" "$GOMOD"; then
+        log_warn "go.mod is missing direct dependency: ${EXPECTED_SDK}"
+        GOMOD_OK=false
+      fi
+      if ! grep -q "${EXPECTED_OAUTH}" "$GOMOD"; then
+        log_warn "go.mod is missing direct dependency: ${EXPECTED_OAUTH}"
+        GOMOD_OK=false
+      fi
+    fi
+
+    if [[ "$GOMOD_OK" == false ]]; then
+      log_info "Writing a fresh go.mod for the SDK programs..."
+      GO_VERSION_SHORT=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/go//')
+      cat > "$GOMOD" <<EOF
+module ${EXPECTED_MODULE}
+
+go ${GO_VERSION_SHORT}
+
+require (
+	github.com/opentdf/platform/sdk v0.7.0
+	golang.org/x/oauth2 v0.30.0
+)
+EOF
+      check_pass "go.mod created (module=${EXPECTED_MODULE}, sdk=v0.7.0)"
+    else
+      check_pass "go.mod is present and contains the expected dependencies"
+    fi
+
     # Load dependencies
     log_info "Running go mod tidy..."
     if (cd "$SDK_DIR" && go mod tidy 2>&1); then
