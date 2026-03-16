@@ -53,6 +53,7 @@ realms:
           name: opentdf-public
           serviceAccountsEnabled: false
           publicClient: true
+          directAccessGrantsEnabled: true
           redirectUris:
             - 'http://localhost:9000/*' # tructl CLI tool
           protocolMappers:

@@ -1,5 +1,14 @@
 #!/bin/bash
-# Installs all prerequisite software for the Virtru DSP COP on Ubuntu 24.04 LTS
+# Installs all prerequisite software for the Virtru DSP on Ubuntu 24.04 LTS
+#
+# Supported platforms:
+#   - Host OS:        Ubuntu 24.04 LTS (amd64 only)
+#   - Containers:     linux/amd64  (DSP Docker images are amd64-only)
+#   - Host arch:      amd64 (x86_64) — arm64 hosts are not supported for Ubuntu installs
+#
+# Note: The DSP Docker images are built for linux/amd64. Running on an arm64 Ubuntu
+# host requires hardware-level amd64 emulation (e.g. QEMU), which is not recommended
+# for production use and may impact performance.
 
 set -e
 
