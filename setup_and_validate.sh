@@ -76,6 +76,19 @@ esac
 
 log_ok "OS: $OS_RAW  |  Arch: $ARCH_RAW  →  ${OS}/${ARCH}"
 
+# Warn Docker Desktop users on Apple Silicon
+if [[ "$OS" == "darwin" && "$ARCH" == "arm64" ]]; then
+  if docker info 2>/dev/null | grep -q "Docker Desktop"; then
+    log_warn "Docker Desktop detected on Apple Silicon."
+    log_warn "OrbStack (https://orbstack.dev) is recommended for this stack — it provides"
+    log_warn "native host networking and built-in Rosetta for linux/amd64 images."
+    log_warn "If staying with Docker Desktop, enable Rosetta:"
+    log_warn "  Settings → General → Use Rosetta for x86/amd64 emulation on Apple Silicon"
+  else
+    log_ok "Docker runtime: $(docker info 2>/dev/null | grep 'Operating System' | awk -F': ' '{print $2}' || echo 'unknown')"
+  fi
+fi
+
 # Script must run from DSP-standalone/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

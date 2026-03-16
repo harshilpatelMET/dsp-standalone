@@ -39,14 +39,29 @@ done
 echo "=== Checking Docker ==="
 if ! command -v docker &> /dev/null; then
   echo "Docker not found."
-  echo "Install one of the following and re-run this script:"
-  echo "  - OrbStack (recommended):     https://orbstack.dev"
-  echo "  - Docker Desktop:             https://www.docker.com/products/docker-desktop"
-  echo "  - Rancher Desktop:            https://rancherdesktop.io"
-  echo "  - Colima (CLI):               brew install colima && colima start"
+  echo ""
+  echo "  OrbStack is RECOMMENDED for this stack on macOS."
+  echo "  It provides native host networking and built-in Rosetta for linux/amd64 images."
+  echo ""
+  echo "  Install options (then re-run this script):"
+  echo "    OrbStack (recommended):   https://orbstack.dev"
+  echo "    Docker Desktop (note):    https://www.docker.com/products/docker-desktop"
+  echo "      → If using Docker Desktop on Apple Silicon, enable Rosetta first:"
+  echo "        Settings → General → Use Rosetta for x86/amd64 emulation on Apple Silicon"
+  echo "    Rancher Desktop:          https://rancherdesktop.io"
+  echo "    Colima (CLI):             brew install colima && colima start"
   exit 1
 else
   echo "Docker already installed — $(docker --version)"
+  # Warn Docker Desktop users on Apple Silicon about Rosetta
+  if [[ "$(uname -m)" == "arm64" ]] && docker info 2>/dev/null | grep -q "Docker Desktop"; then
+    echo ""
+    echo "  WARNING: Docker Desktop detected on Apple Silicon."
+    echo "  This stack uses linux/amd64 images. For best performance, enable Rosetta emulation:"
+    echo "    Docker Desktop → Settings → General → Use Rosetta for x86/amd64 emulation on Apple Silicon"
+    echo "  OrbStack (https://orbstack.dev) is recommended as an alternative — it handles this automatically."
+    echo ""
+  fi
 fi
 
 # ------------------------------------------------------------
