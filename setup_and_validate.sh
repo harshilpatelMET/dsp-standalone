@@ -8,9 +8,11 @@
 # Supports: macOS (Intel + Apple Silicon), Ubuntu/Debian Linux (amd64 + arm64)
 #
 # Usage:
-#   ./setup_and_validate.sh                  # full run
-#   ./setup_and_validate.sh --skip-prereqs   # skip tool installs, go straight to keys/stack
-#   ./setup_and_validate.sh --validate-only  # validate a running stack (no setup)
+#   ./setup_and_validate.sh                              # full run
+#   ./setup_and_validate.sh --skip-prereqs               # skip tool installs, go straight to keys/stack
+#   ./setup_and_validate.sh --validate-only              # validate a running stack (no setup)
+#   ./setup_and_validate.sh --sdk-validation             # also build and run Go SDK test programs
+#   ./setup_and_validate.sh --validate-only --sdk-validation  # validate + SDK tests only
 # =============================================================================
 
 set -euo pipefail
@@ -20,10 +22,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SKIP_PREREQS=false
 VALIDATE_ONLY=false
+SDK_VALIDATION=false
 for arg in "$@"; do
   case "$arg" in
-    --skip-prereqs)  SKIP_PREREQS=true ;;
-    --validate-only) VALIDATE_ONLY=true ;;
+    --skip-prereqs)    SKIP_PREREQS=true ;;
+    --validate-only)   VALIDATE_ONLY=true ;;
+    --sdk-validation)  SDK_VALIDATION=true ;;
   esac
 done
 
@@ -462,6 +466,79 @@ if [[ "$KC_TABLES" -gt 0 ]]; then
 else
   check_fail "No tables found in Keycloak DB"
   ERRORS+=("Keycloak DB empty or missing")
+fi
+
+# ---------------------------------------------------------------------------
+# SDK Validation (optional — requires --sdk-validation flag)
+# ---------------------------------------------------------------------------
+
+# Helper: print captured output indented inside a labeled box
+print_program_output() {
+  local label="$1"
+  local output="$2"
+  echo
+  echo -e "    ${BOLD}┌─ ${label} output ──────────────────────────────────────────${NC}"
+  echo "$output" | while IFS= read -r line; do
+    echo -e "    ${BOLD}│${NC}  $line"
+  done
+  echo -e "    ${BOLD}└───────────────────────────────────────────────────────────${NC}"
+  echo
+}
+
+if [[ "$SDK_VALIDATION" == "true" ]]; then
+  log_section "SDK Validation (Go programs)"
+
+  SDK_DIR="$SCRIPT_DIR"
+
+  # Verify Go is installed
+  if ! command -v go &> /dev/null; then
+    check_fail "Go is not installed — cannot run SDK validation"
+    ERRORS+=("Go not found; install Go and re-run with --sdk-validation")
+  else
+    log_ok "Go found: $(go version)"
+
+    # Load dependencies
+    log_info "Running go mod tidy..."
+    if (cd "$SDK_DIR" && go mod tidy 2>&1); then
+      check_pass "go mod tidy succeeded"
+    else
+      check_fail "go mod tidy failed"
+      ERRORS+=("go mod tidy failed — check go.mod and network connectivity")
+    fi
+
+    # --- toySDK.go: Alex encrypts a file ---
+    log_info "Running toySDK.go (Alex creates alex_test.tdf)..."
+    TOY_OUTPUT=$(cd "$SDK_DIR" && go run toySDK.go 2>&1) && TOY_RC=0 || TOY_RC=$?
+    print_program_output "toySDK.go" "$TOY_OUTPUT"
+    if [[ $TOY_RC -eq 0 ]]; then
+      check_pass "toySDK.go: Alex successfully encrypted and decrypted the TDF"
+    else
+      check_fail "toySDK.go failed (exit $TOY_RC)"
+      ERRORS+=("toySDK.go failed — Alex could not create TDF")
+    fi
+
+    # --- bobTestAlexFile.go: Bob (TS/GBR) should decrypt Alex's file ---
+    log_info "Running bobTestAlexFile.go (Bob reads Alex's file)..."
+    BOB_OUTPUT=$(cd "$SDK_DIR" && go run bobTestAlexFile.go 2>&1) && BOB_RC=0 || BOB_RC=$?
+    print_program_output "bobTestAlexFile.go" "$BOB_OUTPUT"
+    if [[ $BOB_RC -eq 0 ]]; then
+      check_pass "bobTestAlexFile.go: Bob successfully decrypted Alex's file (FVEY + TS access)"
+    else
+      check_fail "bobTestAlexFile.go failed (exit $BOB_RC)"
+      ERRORS+=("bobTestAlexFile.go failed — Bob should be able to decrypt Alex's file")
+    fi
+
+    # --- aliceTestAlexFile.go: Alice (S/USA) should be denied ---
+    log_info "Running aliceTestAlexFile.go (Alice denied Alex's file)..."
+    ALICE_OUTPUT=$(cd "$SDK_DIR" && go run aliceTestAlexFile.go 2>&1) && ALICE_RC=0 || ALICE_RC=$?
+    print_program_output "aliceTestAlexFile.go" "$ALICE_OUTPUT"
+    if [[ $ALICE_RC -eq 0 ]]; then
+      check_pass "aliceTestAlexFile.go: KAS correctly denied Alice access to Top Secret file"
+    else
+      check_fail "aliceTestAlexFile.go failed (exit $ALICE_RC) — expected denial to succeed"
+      ERRORS+=("aliceTestAlexFile.go: access denial test did not succeed as expected")
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
