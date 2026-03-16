@@ -324,6 +324,21 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 fi  # end prerequisites block
 
 # ---------------------------------------------------------------------------
+# Detect DSP image tag from registry
+# ---------------------------------------------------------------------------
+log_section "Detecting DSP image version"
+
+DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list 2>/dev/null \
+  | jq -r '.tags | sort | last' 2>/dev/null || echo "")
+
+if [[ -z "$DSP_TAG" || "$DSP_TAG" == "null" ]]; then
+  die "Could not detect DSP image tag from local registry.\nMake sure the registry is running and the image has been loaded."
+fi
+
+DSP_IMAGE="localhost:5000/virtru/data-security-platform:${DSP_TAG}"
+log_ok "DSP image: $DSP_IMAGE"
+
+# ---------------------------------------------------------------------------
 # Start the stack
 # ---------------------------------------------------------------------------
 if [[ "$VALIDATE_ONLY" == false ]]; then
@@ -334,8 +349,10 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_info "Running: docker compose up -d (--no-build: using cached images)"
     docker compose up -d
   else
-    log_info "Running: docker compose up --build -d"
-    docker compose up --build -d
+    log_info "Running: docker compose build --build-arg DSP_IMAGE=${DSP_IMAGE}"
+    docker compose build --build-arg "DSP_IMAGE=${DSP_IMAGE}"
+    log_info "Running: docker compose up -d"
+    docker compose up -d
   fi
   log_ok "Stack started in detached mode"
 
@@ -385,7 +402,7 @@ done
   log_info "Check 1b: Waiting for provisioning containers to complete"
 
   for svc in dsp-keycloak-provisioning dsp-provision-federal-policy; do
-    MAX_ATTEMPTS=5
+    MAX_ATTEMPTS=4
     ATTEMPT=0
     PROVISIONED=false
     while [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; do
@@ -573,38 +590,71 @@ EOF
       ERRORS+=("go mod tidy failed — check go.mod and network connectivity")
     fi
 
-    # --- toySDK.go: Alex encrypts a file ---
-    log_info "Running toySDK.go (Alex creates alex_test.tdf)..."
-    TOY_OUTPUT=$(cd "$SDK_DIR" && go run toySDK.go 2>&1) && TOY_RC=0 || TOY_RC=$?
-    print_program_output "toySDK.go" "$TOY_OUTPUT"
-    if [[ $TOY_RC -eq 0 ]]; then
-      check_pass "toySDK.go: Alex successfully encrypted and decrypted the TDF"
+    # --- Build all three programs first ----------------------------------------
+    log_info "Building Go programs..."
+    BUILD_DIR=$(mktemp -d)
+
+    BIN_TOY="$BUILD_DIR/toySDK"
+    BIN_BOB="$BUILD_DIR/bobTestAlexFile"
+    BIN_ALICE="$BUILD_DIR/aliceTestAlexFile"
+
+    BUILD_OK=true
+    while IFS=: read -r src bin; do
+      BUILD_OUTPUT=$(cd "$SDK_DIR" && go build -o "$bin" "$src" 2>&1) && BUILD_RC=0 || BUILD_RC=$?
+      if [[ $BUILD_RC -eq 0 ]]; then
+        check_pass "Built $src"
+      else
+        check_fail "Failed to build $src (exit $BUILD_RC)"
+        echo "$BUILD_OUTPUT" | while IFS= read -r line; do log_fail "  $line"; done
+        ERRORS+=("Build failed: $src — fix compile errors before running SDK tests")
+        BUILD_OK=false
+      fi
+    done <<EOF
+toySDK.go:$BIN_TOY
+bobTestAlexFile.go:$BIN_BOB
+aliceTestAlexFile.go:$BIN_ALICE
+EOF
+
+    if [[ "$BUILD_OK" == false ]]; then
+      log_warn "Skipping SDK test runs due to build failures above"
     else
-      check_fail "toySDK.go failed (exit $TOY_RC)"
-      ERRORS+=("toySDK.go failed — Alex could not create TDF")
+
+      # --- toySDK: Alex encrypts a file ---------------------------------------
+      log_info "Running toySDK (Alex creates alex_test.tdf)..."
+      TOY_OUTPUT=$(cd "$SDK_DIR" && "$BIN_TOY" 2>&1) && TOY_RC=0 || TOY_RC=$?
+      print_program_output "toySDK.go" "$TOY_OUTPUT"
+      if [[ $TOY_RC -eq 0 ]]; then
+        check_pass "toySDK.go: Alex successfully encrypted and decrypted the TDF"
+      else
+        check_fail "toySDK.go failed (exit $TOY_RC)"
+        ERRORS+=("toySDK.go failed — Alex could not create TDF")
+      fi
+
+      # --- bobTestAlexFile: Bob (TS/GBR) should decrypt Alex's file -----------
+      log_info "Running bobTestAlexFile (Bob reads Alex's file)..."
+      BOB_OUTPUT=$(cd "$SDK_DIR" && "$BIN_BOB" 2>&1) && BOB_RC=0 || BOB_RC=$?
+      print_program_output "bobTestAlexFile.go" "$BOB_OUTPUT"
+      if [[ $BOB_RC -eq 0 ]]; then
+        check_pass "bobTestAlexFile.go: Bob successfully decrypted Alex's file (FVEY + TS access)"
+      else
+        check_fail "bobTestAlexFile.go failed (exit $BOB_RC)"
+        ERRORS+=("bobTestAlexFile.go failed — Bob should be able to decrypt Alex's file")
+      fi
+
+      # --- aliceTestAlexFile: Alice (S/USA) should be denied ------------------
+      log_info "Running aliceTestAlexFile (Alice denied Alex's file)..."
+      ALICE_OUTPUT=$(cd "$SDK_DIR" && "$BIN_ALICE" 2>&1) && ALICE_RC=0 || ALICE_RC=$?
+      print_program_output "aliceTestAlexFile.go" "$ALICE_OUTPUT"
+      if [[ $ALICE_RC -eq 0 ]]; then
+        check_pass "aliceTestAlexFile.go: KAS correctly denied Alice access to Top Secret file"
+      else
+        check_fail "aliceTestAlexFile.go failed (exit $ALICE_RC) — expected denial to succeed"
+        ERRORS+=("aliceTestAlexFile.go: access denial test did not succeed as expected")
+      fi
+
     fi
 
-    # --- bobTestAlexFile.go: Bob (TS/GBR) should decrypt Alex's file ---
-    log_info "Running bobTestAlexFile.go (Bob reads Alex's file)..."
-    BOB_OUTPUT=$(cd "$SDK_DIR" && go run bobTestAlexFile.go 2>&1) && BOB_RC=0 || BOB_RC=$?
-    print_program_output "bobTestAlexFile.go" "$BOB_OUTPUT"
-    if [[ $BOB_RC -eq 0 ]]; then
-      check_pass "bobTestAlexFile.go: Bob successfully decrypted Alex's file (FVEY + TS access)"
-    else
-      check_fail "bobTestAlexFile.go failed (exit $BOB_RC)"
-      ERRORS+=("bobTestAlexFile.go failed — Bob should be able to decrypt Alex's file")
-    fi
-
-    # --- aliceTestAlexFile.go: Alice (S/USA) should be denied ---
-    log_info "Running aliceTestAlexFile.go (Alice denied Alex's file)..."
-    ALICE_OUTPUT=$(cd "$SDK_DIR" && go run aliceTestAlexFile.go 2>&1) && ALICE_RC=0 || ALICE_RC=$?
-    print_program_output "aliceTestAlexFile.go" "$ALICE_OUTPUT"
-    if [[ $ALICE_RC -eq 0 ]]; then
-      check_pass "aliceTestAlexFile.go: KAS correctly denied Alice access to Top Secret file"
-    else
-      check_fail "aliceTestAlexFile.go failed (exit $ALICE_RC) — expected denial to succeed"
-      ERRORS+=("aliceTestAlexFile.go: access denial test did not succeed as expected")
-    fi
+    rm -rf "$BUILD_DIR"
   fi
 fi
 

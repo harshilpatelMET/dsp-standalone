@@ -49,8 +49,9 @@ The script will:
 
 | Flag | Effect |
 |---|---|
-| *(none)* | Full run: prereqs → keys → stack → validate |
+| *(none)* | Full run: prereqs → keys → build → stack → validate |
 | `--skip-prereqs` | Skip tool installation; still validates tools are present |
+| `--no-build` | Start stack using cached images — skips `docker compose build` (faster on repeat runs) |
 | `--validate-only` | Run validation checks only against an already-running stack |
 | `--sdk-validation` | After stack validation, build and run the three Go SDK test programs |
 
@@ -62,6 +63,9 @@ Flags can be combined:
 
 # Full run including SDK tests
 ./setup_and_validate.sh --sdk-validation
+
+# Skip prereqs and skip rebuild (fastest repeat run)
+./setup_and_validate.sh --skip-prereqs --no-build
 ```
 
 > **Ubuntu note:** After running `ubuntu_prereqs.sh` for the first time, Docker group membership requires a logout/login (or `newgrp docker`) before Docker commands work without `sudo`. If `setup_and_validate.sh` reports the Docker daemon is unreachable on Linux, log out and back in, then re-run with `--skip-prereqs`.
@@ -207,8 +211,21 @@ docker run -d --restart=always -p 5000:5000 --name registry registry:2
 cd virtru-dsp-bundle/
 ./dsp copy-images --insecure localhost:5000/virtru
 
-# Verify
-curl -s http://localhost:5000/v2/virtru/data-security-platform/tags/list
+# Verify and note the tag (you will need it for the build step)
+curl -s http://localhost:5000/v2/virtru/data-security-platform/tags/list | jq .
+```
+
+The `DSP_IMAGE` build argument must be passed when building the image — `setup_and_validate.sh` detects the tag automatically. For manual builds, query the registry and pass the tag explicitly:
+
+```bash
+# Detect the tag
+DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list | jq -r '.tags | sort | last')
+
+# Build
+docker compose build --build-arg "DSP_IMAGE=localhost:5000/virtru/data-security-platform:${DSP_TAG}"
+
+# Start
+docker compose up -d
 ```
 
 ---
@@ -219,14 +236,23 @@ All commands run from the `DSP-standalone/` directory.
 
 ### Start
 
+The `dev.dsp.Dockerfile` requires the `DSP_IMAGE` build argument. Build and start in two steps:
+
 ```bash
-docker compose up --build
+# Detect the DSP image tag from the local registry
+DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list | jq -r '.tags | sort | last')
+
+# Build images
+docker compose build --build-arg "DSP_IMAGE=localhost:5000/virtru/data-security-platform:${DSP_TAG}"
+
+# Start detached
+docker compose up -d
 ```
 
-To run detached (in the background):
+On repeat runs where the images are already built, skip the build step:
 
 ```bash
-docker compose up --build -d
+docker compose up -d
 ```
 
 ### Stop
@@ -266,7 +292,7 @@ keycloak-db (healthy)
                                 └─► dsp-provision-federal-policy (completed)
 ```
 
-Allow ~3–5 minutes on first run for Keycloak to initialize.
+Allow ~2–3 minutes on first run for Keycloak to initialize. The provisioning containers (`dsp-keycloak-provisioning`, `dsp-provision-federal-policy`) are one-shot — they run once, exit with code 0 on success, and do not restart. A non-zero exit code means provisioning failed; check logs with `docker compose logs dsp-keycloak-provisioning`.
 
 ---
 

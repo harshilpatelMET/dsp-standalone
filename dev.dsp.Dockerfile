@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.6
 # Set your runtime image (override with --build-arg)
-ARG DSP_IMAGE=localhost:5000/virtru/data-security-platform:v2.7.4
+# DSP_IMAGE must be supplied at build time (e.g. --build-arg DSP_IMAGE=localhost:5000/virtru/data-security-platform:v2.7.4)
+# setup_and_validate.sh detects the correct tag from the local registry automatically.
+ARG DSP_IMAGE
 
 # ---------- prep stage: build CA bundle & stage files ----------
 FROM alpine:latest AS prep
