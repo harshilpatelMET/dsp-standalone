@@ -155,6 +155,22 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   fi
 
+  # --- federal policy sample ------------------------------------------------
+  log_section "Sample federal policy"
+
+  FEDERAL_SRC="$SCRIPT_DIR/virtru-dsp-bundle/samples/defaults/federal.yaml"
+  FEDERAL_DST="$SCRIPT_DIR/sample.federal_policy.yaml"
+
+  if [[ -f "$FEDERAL_DST" ]]; then
+    log_ok "sample.federal_policy.yaml already exists — skipping"
+  elif [[ -f "$FEDERAL_SRC" ]]; then
+    cp "$FEDERAL_SRC" "$FEDERAL_DST"
+    log_ok "Copied $FEDERAL_SRC → $FEDERAL_DST"
+  else
+    log_warn "Bundle policy file not found: $FEDERAL_SRC"
+    log_warn "sample.federal_policy.yaml will need to be provided manually before starting the stack."
+  fi
+
   # --- /etc/hosts -----------------------------------------------------------
   log_section "/etc/hosts"
 
