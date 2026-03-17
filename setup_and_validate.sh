@@ -8,7 +8,7 @@
 # Supports: macOS (Intel + Apple Silicon), Ubuntu/Debian Linux (amd64 + arm64)
 #
 # Usage:
-#   ./setup_and_validate.sh                              # full run (with --build)
+#   ./setup_and_validate.sh                              # full run (with --build) + SDK validation
 #   ./setup_and_validate.sh --skip-prereqs               # skip tool installs, go straight to keys/stack
 #   ./setup_and_validate.sh --no-build                   # start stack using cached images (no --build)
 #   ./setup_and_validate.sh --validate-only              # validate a running stack (no setup)
@@ -36,6 +36,11 @@ for arg in "$@"; do
     --no-build)        NO_BUILD=true ;;
   esac
 done
+
+# Default: run SDK validation when no flags are passed
+if [[ $# -eq 0 ]]; then
+  SDK_VALIDATION=true
+fi
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -418,22 +423,25 @@ done
   log_info "Check 1b: Waiting for provisioning containers to complete"
 
   for svc in dsp-keycloak-provisioning dsp-provision-federal-policy; do
+    CONTAINER="virtru-dsp-only-${svc}-1"
     MAX_ATTEMPTS=4
     ATTEMPT=0
     PROVISIONED=false
     while [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; do
       ATTEMPT=$((ATTEMPT + 1))
-      if docker compose ps "$svc" 2>/dev/null | grep -q "Exited (0)"; then
-        check_pass "$svc completed successfully"
+      CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo "")
+      CONTAINER_EXIT=$(docker inspect --format='{{.State.ExitCode}}' "$CONTAINER" 2>/dev/null || echo "-1")
+      if [[ "$CONTAINER_STATUS" == "exited" && "$CONTAINER_EXIT" == "0" ]]; then
+        check_pass "$svc ($CONTAINER) exited cleanly (0)"
         PROVISIONED=true
         break
       fi
-      log_info "$svc not yet done (attempt $ATTEMPT/$MAX_ATTEMPTS) — waiting 15s..."
+      log_info "$svc status: ${CONTAINER_STATUS:-not found} / exit: ${CONTAINER_EXIT} (attempt $ATTEMPT/$MAX_ATTEMPTS) — waiting 15s..."
       sleep 15
     done
     if [[ "$PROVISIONED" == false ]]; then
-      log_warn "$svc did not reach Exited (0) after $MAX_ATTEMPTS attempts — continuing with warning"
-      log_warn "Validation checks may fail if provisioning is still in progress."
+      log_warn "$svc did not reach exited(0) after $MAX_ATTEMPTS attempts — continuing with warning"
+      log_warn "Last status: ${CONTAINER_STATUS:-unknown}  exit code: ${CONTAINER_EXIT:-unknown}"
       log_warn "To inspect: docker compose logs $svc"
     fi
   done
