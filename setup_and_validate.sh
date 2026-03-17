@@ -79,7 +79,12 @@ case "$ARCH_RAW" in
   *)             die "Unsupported architecture: $ARCH_RAW" ;;
 esac
 
-log_ok "OS: $OS_RAW  |  Arch: $ARCH_RAW  →  ${OS}/${ARCH}"
+# HOST_ARCH  — native CPU arch; used for installing tools (Go, mkcert, grpcurl, DSP CLI)
+# CONTAINER_ARCH — always amd64; DSP Docker images are linux/amd64-only
+HOST_ARCH="$ARCH"
+CONTAINER_ARCH="amd64"
+
+log_ok "OS: $OS_RAW  |  Host arch: ${OS}/${HOST_ARCH}  |  Container arch: linux/${CONTAINER_ARCH}"
 
 # Warn Docker Desktop users on Apple Silicon
 if [[ "$OS" == "darwin" && "$ARCH" == "arm64" ]]; then
@@ -213,7 +218,48 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
   # --- mkcert trust store ---------------------------------------------------
   log_section "TLS trust store (mkcert)"
 
-  mkcert -install 2>/dev/null || log_warn "mkcert -install failed (may need sudo or NSS tools). Continuing."
+  if [[ "$OS" == "linux" ]]; then
+    # On Linux mkcert -install must run as the REGULAR USER so the CA is
+    # created in the user's CAROOT (~/.local/share/mkcert/) and NSS databases
+    # in the user's home are updated. Running as sudo creates the CA under
+    # /root and the two halves never match.
+    # After that, copy the CA into the system store separately with sudo.
+
+    # Check mkcert binary is the correct arch — reinstall if not executable
+    if command -v mkcert &>/dev/null; then
+      if ! mkcert --version &>/dev/null 2>&1; then
+        log_warn "mkcert binary cannot execute (wrong arch?) — reinstalling for linux/${HOST_ARCH}..."
+        MKCERT_VERSION=$(curl -fsSL https://api.github.com/repos/FiloSottile/mkcert/releases/latest \
+          | grep tag_name | cut -d'"' -f4)
+        wget -q -P /tmp "https://github.com/FiloSottile/mkcert/releases/download/${MKCERT_VERSION}/mkcert-${MKCERT_VERSION}-linux-${HOST_ARCH}"
+        sudo rm -f /usr/local/bin/mkcert
+        sudo mv "/tmp/mkcert-${MKCERT_VERSION}-linux-${HOST_ARCH}" /usr/local/bin/mkcert
+        sudo chmod +x /usr/local/bin/mkcert
+        log_ok "mkcert reinstalled: $(mkcert --version)"
+      fi
+    fi
+
+    if ! command -v certutil &>/dev/null; then
+      log_warn "certutil not found — installing libnss3-tools..."
+      sudo apt-get install -y libnss3-tools 2>/dev/null \
+        || log_warn "Could not install libnss3-tools — browser trust may be incomplete."
+    fi
+    log_info "Running mkcert -install as current user (linux/${HOST_ARCH})..."
+    mkcert -install 2>&1 && log_ok "mkcert CA installed in user trust store" \
+      || log_warn "mkcert -install reported warnings — continuing."
+
+    log_info "Copying mkcert CA to system trust store..."
+    MKCERT_CAROOT=$(mkcert -CAROOT 2>/dev/null || echo "")
+    if [[ -f "${MKCERT_CAROOT}/rootCA.pem" ]]; then
+      sudo cp "${MKCERT_CAROOT}/rootCA.pem" /usr/local/share/ca-certificates/mkcert-rootCA.crt
+      sudo update-ca-certificates && log_ok "mkcert CA added to system trust store"
+    else
+      log_warn "Could not find mkcert rootCA.pem at ${MKCERT_CAROOT} — system trust store not updated."
+    fi
+  else
+    mkcert -install 2>/dev/null && log_ok "mkcert CA installed" \
+      || log_warn "mkcert -install failed (may need sudo or NSS tools). Continuing."
+  fi
 
   # --- dsp-keys/ ------------------------------------------------------------
   log_section "Generating dsp-keys/"
