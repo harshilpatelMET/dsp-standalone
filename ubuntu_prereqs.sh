@@ -12,6 +12,27 @@
 
 set -e
 
+# ------------------------------------------------------------
+# Architecture detection
+#   HOST_ARCH  — the real CPU architecture; used for installing
+#                native tools (Go, grpcurl, DSP binary)
+#   CONTAINER_ARCH — always amd64; DSP Docker images are
+#                    linux/amd64-only regardless of host CPU
+# ------------------------------------------------------------
+ARCH_RAW=$(uname -m)
+case "$ARCH_RAW" in
+  x86_64)        HOST_ARCH="amd64" ;;
+  aarch64|arm64) HOST_ARCH="arm64" ;;
+  *) echo "Unsupported architecture: $ARCH_RAW"; exit 1 ;;
+esac
+CONTAINER_ARCH="amd64"
+
+echo "=== Architecture: host=linux/${HOST_ARCH}  containers=linux/${CONTAINER_ARCH} ==="
+if [[ "$HOST_ARCH" != "$CONTAINER_ARCH" ]]; then
+  echo "    NOTE: Host is ${HOST_ARCH}. DSP Docker images are ${CONTAINER_ARCH}-only."
+  echo "    Docker will use QEMU emulation — performance may be reduced."
+fi
+
 echo "=== Updating system packages ==="
 sudo apt update -y && sudo apt upgrade -y
 
@@ -90,11 +111,14 @@ fi
 echo "=== Installing Go (Golang) ==="
 GO_VERSION="1.23.2"
 if ! command -v go &> /dev/null; then
-  wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
+  GO_TAR="go${GO_VERSION}.linux-${HOST_ARCH}.tar.gz"
+  wget -P /tmp "https://go.dev/dl/${GO_TAR}"
   sudo rm -rf /usr/local/go
-  sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+  sudo tar -C /usr/local -xzf "/tmp/${GO_TAR}"
+  rm "/tmp/${GO_TAR}"
   echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-  rm go${GO_VERSION}.linux-amd64.tar.gz
+  export PATH=$PATH:/usr/local/go/bin   # take effect in this session
+  echo "Go installed: $(go version)"
 fi
 
 
@@ -132,17 +156,6 @@ else
 fi
 
 # ------------------------------------------------------------
-# Detect architecture
-# ------------------------------------------------------------
-ARCH_RAW=$(uname -m)
-case "$ARCH_RAW" in
-  x86_64)        ARCH="amd64" ;;
-  aarch64|arm64) ARCH="arm64" ;;
-  *) echo "Unsupported architecture: $ARCH_RAW"; exit 1 ;;
-esac
-echo "=== Detected architecture: linux/${ARCH} ==="
-
-# ------------------------------------------------------------
 # DSP Bundle — unpack binary and grpcurl
 # ------------------------------------------------------------
 echo "=== DSP Bundle Setup ==="
@@ -170,19 +183,19 @@ mkdir -p virtru-dsp-bundle
 tar -xvf "$BUNDLE_TAR" -C virtru-dsp-bundle/
 cd virtru-dsp-bundle/
 
-# Unpack DSP binary for linux/${ARCH}
-DSP_TAR=$(ls tools/dsp/data-security-platform_*_linux_${ARCH}.tar.gz 2>/dev/null | head -1)
+# Unpack DSP binary — uses HOST_ARCH (native binary for this machine)
+DSP_TAR=$(ls tools/dsp/data-security-platform_*_linux_${HOST_ARCH}.tar.gz 2>/dev/null | head -1)
 if [[ -z "$DSP_TAR" ]]; then
-  echo "ERROR: Could not find DSP binary for linux/${ARCH} in tools/dsp/"
+  echo "ERROR: Could not find DSP binary for linux/${HOST_ARCH} in tools/dsp/"
   exit 1
 fi
 echo "Unpacking DSP binary: $DSP_TAR"
 tar -xvf "$DSP_TAR"
 
-# Unpack grpcurl for linux/${ARCH}
-GRPCURL_TAR=$(ls tools/grpcurl/grpcurl_*_linux_${ARCH}.tar.gz 2>/dev/null | head -1)
+# Unpack grpcurl — uses HOST_ARCH (native binary for this machine)
+GRPCURL_TAR=$(ls tools/grpcurl/grpcurl_*_linux_${HOST_ARCH}.tar.gz 2>/dev/null | head -1)
 if [[ -z "$GRPCURL_TAR" ]]; then
-  echo "ERROR: Could not find grpcurl for linux/${ARCH} in tools/grpcurl/"
+  echo "ERROR: Could not find grpcurl for linux/${HOST_ARCH} in tools/grpcurl/"
   exit 1
 fi
 echo "Unpacking grpcurl: $GRPCURL_TAR"
