@@ -24,6 +24,19 @@ NOTE: This setup instance uses default usernames and credentials and should not 
 | Other Linux distributions | Not currently supported |
 | Windows | Not currently supported |
 
+### macOS Docker runtime
+
+**OrbStack is the recommended Docker runtime on macOS.** It provides native `host` networking (required by this stack), built-in Rosetta emulation for `linux/amd64` images on Apple Silicon, and faster startup times compared to Docker Desktop.
+
+| Runtime | Recommended | Notes |
+|---|---|---|
+| [OrbStack](https://orbstack.dev) | **Yes (recommended)** | Native host networking, built-in Rosetta, fastest performance |
+| Docker Desktop | With caveats | Requires Rosetta enabled manually; host networking less reliable — see note below |
+| Rancher Desktop | Not tested | — |
+| Colima | Not tested | — |
+
+> **Docker Desktop on Apple Silicon:** If you use Docker Desktop instead of OrbStack, you must enable Rosetta emulation: **Docker Desktop → Settings → General → "Use Rosetta for x86/amd64 emulation on Apple Silicon"**. Without it, the `linux/amd64` DSP images will run under QEMU and be significantly slower, likely causing startup timeouts. Additionally, `network_mode: host` behaves differently under Docker Desktop — if services are unreachable, add explicit `ports:` mappings to `keycloak` and `dsp` in `docker-compose.yaml`.
+
 ---
 
 ## Prerequisites
@@ -49,26 +62,31 @@ The script will:
 
 | Flag | Effect |
 |---|---|
-| *(none)* | Full run: prereqs → keys → build → stack → validate |
+| *(none)* | Full run: prereqs → keys → build → stack → validate → **SDK tests** |
 | `--skip-prereqs` | Skip tool installation; still validates tools are present |
 | `--no-build` | Start stack using cached images — skips `docker compose build` (faster on repeat runs) |
 | `--validate-only` | Run infra validation checks only against an already-running stack (no setup or start) |
 | `--sdk-validation` | After infra validation, build and run the three Go SDK test programs |
 | `--sdk-only` | Run the Go SDK tests only — skips all infra validation checks |
 
+> **SDK tests run by default.** When no flags are passed, the Go SDK tests run automatically at the end of the full validation suite. Pass explicit flags to control this behaviour.
+
 Flags can be combined:
 
 ```bash
+# Full run — includes SDK tests automatically (no flags needed)
+./setup_and_validate.sh
+
 # Validate a running stack AND run SDK tests
 ./setup_and_validate.sh --validate-only --sdk-validation
+
+# Validate a running stack WITHOUT SDK tests
+./setup_and_validate.sh --validate-only
 
 # Run only the Go SDK tests (fastest — skips all infra checks)
 ./setup_and_validate.sh --sdk-only
 
-# Full run including SDK tests
-./setup_and_validate.sh --sdk-validation
-
-# Skip prereqs and skip rebuild (fastest repeat run)
+# Skip prereqs and skip rebuild (fastest repeat run, includes SDK tests)
 ./setup_and_validate.sh --skip-prereqs --no-build
 ```
 
@@ -88,7 +106,7 @@ Flags can be combined:
 
 Installs: Homebrew (if missing), curl, wget, git, make, python3, jq, Node.js, nvm, Go, mkcert (+ trust store), cosign. Also adds the `/etc/hosts` entry.
 
-> Docker cannot be installed automatically on macOS. If Docker is not already present, the script will print install options (OrbStack, Docker Desktop, Rancher Desktop, Colima) and exit. Install one, start it, then re-run.
+> Docker cannot be installed automatically on macOS. If Docker is not already present, the script will print install options and exit. **OrbStack is recommended** — install it from [orbstack.dev](https://orbstack.dev), start it, then re-run. If using Docker Desktop, enable Rosetta first: **Settings → General → "Use Rosetta for x86/amd64 emulation on Apple Silicon"**.
 
 **Ubuntu 24.04 LTS** — run the provided script:
 
@@ -944,9 +962,9 @@ The three Go programs below can be run individually (see each section) or all to
 
 | Command | What runs |
 |---|---|
-| `./setup_and_validate.sh --sdk-only` | Go SDK tests only (fastest) |
+| `./setup_and_validate.sh` | Full setup + infra checks + Go SDK tests (default) |
 | `./setup_and_validate.sh --validate-only --sdk-validation` | Infra checks + Go SDK tests |
-| `./setup_and_validate.sh --sdk-validation` | Full setup + infra checks + Go SDK tests |
+| `./setup_and_validate.sh --sdk-only` | Go SDK tests only (fastest) |
 
 ### toySDK.go
 
