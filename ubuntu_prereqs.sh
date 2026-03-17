@@ -86,7 +86,9 @@ fi
 
 
 sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"
+REAL_USER="${SUDO_USER:-$USER}"
+sudo usermod -aG docker "$REAL_USER"
+echo "Added $REAL_USER to the docker group — log out and back in for this to take effect."
 
 # ------------------------------------------------------------
 # Node.js (LTS) + npm + nvm
