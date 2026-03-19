@@ -84,7 +84,43 @@ esac
 HOST_ARCH="$ARCH"
 CONTAINER_ARCH="amd64"
 
+# Linux distro detection — used to select prereqs script and distro-specific commands
+DISTRO_ID=""
+DISTRO_ID_LIKE=""
+IS_RHEL=false
+if [[ "$OS" == "linux" ]]; then
+  DISTRO_ID=$(grep -E '^ID=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  DISTRO_ID_LIKE=$(grep -E '^ID_LIKE=' /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  if [[ "$DISTRO_ID" == "rhel" || "$DISTRO_ID" == "centos" || "$DISTRO_ID" == "rocky" || "$DISTRO_ID" == "almalinux" || "$DISTRO_ID_LIKE" == *"rhel"* ]]; then
+    IS_RHEL=true
+  fi
+fi
+
 log_ok "OS: $OS_RAW  |  Host arch: ${OS}/${HOST_ARCH}  |  Container arch: linux/${CONTAINER_ARCH}"
+if [[ "$OS" == "linux" ]]; then
+  log_ok "Linux distro: ${DISTRO_ID}  |  RHEL-family: ${IS_RHEL}"
+fi
+
+# RHEL-specific environment checks
+if [[ "$IS_RHEL" == true ]]; then
+  # SELinux check — enforcing mode blocks Docker bind mounts without :z label
+  if command -v getenforce &>/dev/null; then
+    SELINUX_STATUS=$(getenforce 2>/dev/null || echo "Unknown")
+    if [[ "$SELINUX_STATUS" == "Enforcing" ]]; then
+      log_warn "SELinux is Enforcing. Docker bind mounts require the :z volume label or"
+      log_warn "SELinux may block container access to dsp-keys/ and config files."
+      log_warn "The docker-compose.yaml in this repo includes :z labels for RHEL compatibility."
+    else
+      log_ok "SELinux status: ${SELINUX_STATUS}"
+    fi
+  fi
+
+  # Firewalld check — can interfere with Docker bridge networking
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    log_warn "firewalld is active. If containers cannot reach the internet during build,"
+    log_warn "run: sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0 && sudo firewall-cmd --reload"
+  fi
+fi
 
 # Warn Docker Desktop users on Apple Silicon
 if [[ "$OS" == "darwin" && "$ARCH" == "arm64" ]]; then
@@ -120,25 +156,29 @@ validate_tools() {
     fi
   done
 
-  # Docker daemon check (separate from binary presence)
-  if command -v docker &>/dev/null; then
-    if docker info &>/dev/null 2>&1; then
-      log_ok "Docker daemon is running"
-    else
-      log_warn "Docker binary found but daemon is not running."
-      if [[ "$OS" == "darwin" ]]; then
-        log_warn "Start OrbStack or Docker Desktop, then re-run."
-      else
-        log_warn "Try: sudo systemctl start docker  or  newgrp docker"
-      fi
-      missing+=("docker-daemon")
-    fi
-  fi
-
+  # Fail hard on missing binaries first
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo
     log_fail "Missing tools: ${missing[*]}"
     die "Fix the above then re-run with --skip-prereqs to skip tool installation."
+  fi
+
+  # Docker daemon check — warn only, do not die
+  # On Linux the docker group change requires a new login session; the binary
+  # may be installed but the daemon unreachable until the user re-logs in.
+  if command -v docker &>/dev/null; then
+    if docker info &>/dev/null 2>&1; then
+      log_ok "Docker daemon is running"
+    else
+      log_warn "Docker binary found but daemon is not running or not accessible."
+      if [[ "$OS" == "darwin" ]]; then
+        log_warn "Start OrbStack or Docker Desktop, then re-run."
+      else
+        log_warn "If you were just added to the docker group, run: newgrp docker"
+        log_warn "Or log out and back in, then re-run with --skip-prereqs."
+        log_warn "Continuing — Docker steps may fail if the daemon is unreachable."
+      fi
+    fi
   fi
 }
 
@@ -153,7 +193,13 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
     case "$OS" in
       darwin) PREREQS_SCRIPT="$SCRIPT_DIR/mac_prereqs.sh" ;;
-      linux)  PREREQS_SCRIPT="$SCRIPT_DIR/ubuntu_prereqs.sh" ;;
+      linux)
+        if [[ "$IS_RHEL" == true ]]; then
+          PREREQS_SCRIPT="$SCRIPT_DIR/rhel_prereqs.sh"
+        else
+          PREREQS_SCRIPT="$SCRIPT_DIR/ubuntu_prereqs.sh"
+        fi
+        ;;
     esac
 
     if [[ ! -f "$PREREQS_SCRIPT" ]]; then
@@ -173,9 +219,11 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
     echo
     if [[ $PREREQS_EXIT -ne 0 ]]; then
-      die "Prerequisites script exited with code $PREREQS_EXIT.\nReview the output above and fix any errors before continuing."
+      log_warn "Prerequisites script exited with code $PREREQS_EXIT — some tools may not have installed correctly."
+      log_warn "Continuing to container setup. Re-run with --skip-prereqs if tools are already installed."
+    else
+      log_ok "Prerequisites script completed successfully (exit 0)"
     fi
-    log_ok "Prerequisites script completed successfully (exit 0)"
 
     log_section "Validating installed tools"
     validate_tools
@@ -239,20 +287,27 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
       fi
     fi
 
-    if ! command -v certutil &>/dev/null; then
-      log_warn "certutil not found — installing libnss3-tools..."
-      sudo apt-get install -y libnss3-tools 2>/dev/null \
-        || log_warn "Could not install libnss3-tools — browser trust may be incomplete."
-    fi
-    log_info "Running mkcert -install as current user (linux/${HOST_ARCH})..."
-    mkcert -install 2>&1 && log_ok "mkcert CA installed in user trust store" \
+    # On headless Ubuntu (no browser installed) mkcert -install prints:
+    # "ERROR: no Firefox and/or Chrome/Chromium security databases found"
+    # and exits non-zero. For this stack we only need system trust (curl + Go TLS),
+    # not browser trust. TRUST_STORES=system skips NSS database lookup entirely.
+    log_info "Running mkcert -install (system trust store only, linux/${HOST_ARCH})..."
+    TRUST_STORES=system mkcert -install 2>&1 \
+      && log_ok "mkcert CA installed (system trust store)" \
       || log_warn "mkcert -install reported warnings — continuing."
 
     log_info "Copying mkcert CA to system trust store..."
     MKCERT_CAROOT=$(mkcert -CAROOT 2>/dev/null || echo "")
     if [[ -f "${MKCERT_CAROOT}/rootCA.pem" ]]; then
-      sudo cp "${MKCERT_CAROOT}/rootCA.pem" /usr/local/share/ca-certificates/mkcert-rootCA.crt
-      sudo update-ca-certificates && log_ok "mkcert CA added to system trust store"
+      if [[ "$IS_RHEL" == true ]]; then
+        # RHEL/CentOS: trust anchors live in /etc/pki/ca-trust/source/anchors/
+        sudo cp "${MKCERT_CAROOT}/rootCA.pem" /etc/pki/ca-trust/source/anchors/mkcert-rootCA.pem
+        sudo update-ca-trust extract && log_ok "mkcert CA added to system trust store (RHEL)"
+      else
+        # Debian/Ubuntu: trust anchors live in /usr/local/share/ca-certificates/
+        sudo cp "${MKCERT_CAROOT}/rootCA.pem" /usr/local/share/ca-certificates/mkcert-rootCA.crt
+        sudo update-ca-certificates && log_ok "mkcert CA added to system trust store (Ubuntu)"
+      fi
     else
       log_warn "Could not find mkcert rootCA.pem at ${MKCERT_CAROOT} — system trust store not updated."
     fi
@@ -300,6 +355,19 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_ok "KAS EC key pair generated"
   fi
 
+  # Check cosign binary is the correct arch — reinstall if not executable (Linux only)
+  if [[ "$OSTYPE" == "linux"* ]] && command -v cosign &>/dev/null; then
+    if ! cosign version &>/dev/null 2>&1; then
+      log_warn "cosign binary cannot execute (wrong arch?) — reinstalling for linux/${HOST_ARCH}..."
+      COSIGN_VERSION=$(curl -fsSL https://api.github.com/repos/sigstore/cosign/releases/latest | grep tag_name | cut -d'"' -f4)
+      curl -fsSLo /tmp/cosign "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${HOST_ARCH}"
+      sudo rm -f /usr/local/bin/cosign
+      sudo mv /tmp/cosign /usr/local/bin/cosign
+      sudo chmod +x /usr/local/bin/cosign
+      log_ok "cosign reinstalled for linux/${HOST_ARCH}: $(cosign version 2>&1 | head -1)"
+    fi
+  fi
+
   # cosign key pair
   if [[ -f dsp-keys/policyimportexport/cosign.key && -f dsp-keys/policyimportexport/cosign.pub ]]; then
     log_ok "cosign keys already exist — skipping"
@@ -324,9 +392,14 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
   # --- Local Docker registry ------------------------------------------------
   log_section "Local Docker registry (port 5000)"
 
-  if docker ps --format '{{.Names}}' | grep -q "^registry$"; then
+  # Verify Docker is accessible before any docker commands
+  if ! docker info &>/dev/null 2>&1; then
+    die "Docker daemon is not accessible.\nOn Linux, run: newgrp docker  (or log out and back in)\nThen re-run with: --skip-prereqs"
+  fi
+
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^registry$"; then
     log_ok "Registry container already running"
-  elif docker ps -a --format '{{.Names}}' | grep -q "^registry$"; then
+  elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^registry$"; then
     log_info "Starting existing registry container..."
     docker start registry
     log_ok "Registry started"
@@ -406,6 +479,44 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   DSP_IMAGE="localhost:5000/virtru/data-security-platform:${DSP_TAG}"
   log_ok "DSP image: $DSP_IMAGE"
+
+  # --- Docker DNS check (Linux only) ----------------------------------------
+  # Ubuntu uses systemd-resolved (127.0.0.53) which Docker containers cannot
+  # reach. If the Docker daemon has no explicit DNS configured, Alpine builds
+  # fail with "apk add: exit code 255" (network error).
+  if [[ "$OS" == "linux" ]]; then
+    log_section "Docker DNS check (Linux)"
+    DAEMON_JSON="/etc/docker/daemon.json"
+    DNS_OK=false
+    # Test if containers can resolve DNS by running a quick nslookup
+    if docker run --rm --network bridge alpine:latest nslookup dl-cdn.alpinelinux.org &>/dev/null 2>&1; then
+      DNS_OK=true
+    fi
+    if [[ "$DNS_OK" == false ]]; then
+      log_warn "Docker containers cannot resolve DNS — configuring daemon DNS (8.8.8.8, 1.1.1.1)..."
+      if [[ -f "$DAEMON_JSON" ]]; then
+        # File exists — merge dns field using Python (available on Ubuntu)
+        sudo python3 -c "
+import json, sys
+with open('$DAEMON_JSON') as f:
+    d = json.load(f)
+d['dns'] = ['8.8.8.8', '1.1.1.1']
+with open('$DAEMON_JSON', 'w') as f:
+    json.dump(d, f, indent=2)
+print('Updated $DAEMON_JSON')
+"
+      else
+        echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee "$DAEMON_JSON" > /dev/null
+        log_ok "Created $DAEMON_JSON with DNS servers"
+      fi
+      log_info "Restarting Docker daemon to apply DNS settings..."
+      sudo systemctl restart docker
+      sleep 3
+      log_ok "Docker daemon restarted — DNS set to 8.8.8.8, 1.1.1.1"
+    else
+      log_ok "Docker container DNS is working"
+    fi
+  fi
 
   log_section "Starting Docker Compose stack"
 

@@ -20,9 +20,12 @@ NOTE: This setup instance uses default usernames and credentials and should not 
 | Platform | Status |
 |---|---|
 | macOS (Intel + Apple Silicon) | Supported |
-| Ubuntu 24.04 LTS (amd64 + arm64) | Supported |
+| Ubuntu 24.04 LTS (amd64 + arm64) | **Experimental** |
+| Red Hat Enterprise Linux 8 (amd64 + arm64) | **Experimental** |
 | Other Linux distributions | Not currently supported |
 | Windows | Not currently supported |
+
+> **Experimental Linux support:** Ubuntu 24.04 LTS and RHEL 8 installs are functional but have not been fully validated across all hardware and environment configurations. Please report any issues encountered.
 
 ### macOS Docker runtime
 
@@ -90,7 +93,7 @@ Flags can be combined:
 ./setup_and_validate.sh --skip-prereqs --no-build
 ```
 
-> **Ubuntu note:** After running `ubuntu_prereqs.sh` for the first time, Docker group membership requires a logout/login (or `newgrp docker`) before Docker commands work without `sudo`. If `setup_and_validate.sh` reports the Docker daemon is unreachable on Linux, log out and back in, then re-run with `--skip-prereqs`.
+> **Linux note (Ubuntu + RHEL):** Both Linux installs are experimental. After running the prereqs script for the first time, Docker group membership requires a logout/login (or `newgrp docker`) before Docker commands work without `sudo`. If `setup_and_validate.sh` reports the Docker daemon is unreachable, log out and back in, then re-run with `--skip-prereqs`. The script auto-detects Ubuntu vs RHEL and runs the appropriate prereqs script.
 
 ---
 
@@ -108,7 +111,7 @@ Installs: Homebrew (if missing), curl, wget, git, make, python3, jq, Node.js, nv
 
 > Docker cannot be installed automatically on macOS. If Docker is not already present, the script will print install options and exit. **OrbStack is recommended** — install it from [orbstack.dev](https://orbstack.dev), start it, then re-run. If using Docker Desktop, enable Rosetta first: **Settings → General → "Use Rosetta for x86/amd64 emulation on Apple Silicon"**.
 
-**Ubuntu 24.04 LTS** — run the provided script:
+**Ubuntu 24.04 LTS** *(Experimental)* — run the provided script:
 
 ```bash
 ./ubuntu_prereqs.sh
@@ -117,7 +120,20 @@ Installs: Homebrew (if missing), curl, wget, git, make, python3, jq, Node.js, nv
 newgrp docker
 ```
 
-Installs: Docker (+ Compose plugin), Node.js, nvm, Go, mkcert, cosign. Also adds the `/etc/hosts` entry.
+Installs: Docker CE (+ Compose plugin), Node.js, nvm, Go, mkcert, cosign. Also adds the `/etc/hosts` entry.
+
+**Red Hat Enterprise Linux 8** *(Experimental)* — run the provided script:
+
+```bash
+./rhel_prereqs.sh
+
+# Log out and back in (or run the following) for Docker group changes to take effect:
+newgrp docker
+```
+
+Installs: EPEL repo, Docker CE (+ Compose plugin), Node.js, nvm, Go, mkcert, cosign. Also adds the `/etc/hosts` entry.
+
+> **RHEL note:** Docker CE is installed from the official Docker repository. The `podman-docker` shim (if present) is removed to avoid conflicts. SELinux and firewalld are checked automatically by `setup_and_validate.sh` and warnings are printed if action is needed. After running, log out and back in for Docker group membership to take effect.
 
 #### 2. /etc/hosts entry
 

@@ -1,14 +1,18 @@
 #!/bin/bash
-# Installs all prerequisite software for the Virtru DSP on Ubuntu 24.04 LTS
+# Installs all prerequisite software for the Virtru DSP on Red Hat Enterprise Linux 8
 #
 # Supported platforms:
-#   - Host OS:        Ubuntu 24.04 LTS (amd64 only)
+#   - Host OS:        RHEL 8 (amd64 or arm64)
 #   - Containers:     linux/amd64  (DSP Docker images are amd64-only)
-#   - Host arch:      amd64 (x86_64) — arm64 hosts are not supported for Ubuntu installs
+#   - Host arch:      amd64 (x86_64) or arm64 (aarch64)
 #
-# Note: The DSP Docker images are built for linux/amd64. Running on an arm64 Ubuntu
+# Note: The DSP Docker images are built for linux/amd64. Running on an arm64 RHEL
 # host requires hardware-level amd64 emulation (e.g. QEMU), which is not recommended
 # for production use and may impact performance.
+#
+# Note: RHEL 8 ships with Podman by default. This script installs Docker CE from
+# the official Docker repository. podman-docker (if present) will be removed to
+# avoid conflicts.
 
 set +e  # do not exit on individual step failures — setup_and_validate.sh handles continuation
 
@@ -34,42 +38,56 @@ if [[ "$HOST_ARCH" != "$CONTAINER_ARCH" ]]; then
 fi
 
 echo "=== Updating system packages ==="
-sudo apt update -y && sudo apt upgrade -y
+sudo dnf update -y
 
-#echo "=== Installing packages for Virtualbox ==="
-#sudo apt install -y \
-#  open-vm-tools-desktop \
-#  virtualbox-guest-additions-iso \
-#  virtualbox-ext-pack
+# ------------------------------------------------------------
+# EPEL repository (needed for some packages on RHEL 8)
+# ------------------------------------------------------------
+echo "=== Enabling EPEL repository ==="
+if ! rpm -q epel-release &>/dev/null; then
+  sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+  echo "EPEL enabled."
+else
+  echo "EPEL already enabled — skipping."
+fi
 
 echo "=== Installing core dependencies ==="
-sudo apt install -y \
-  build-essential \
+sudo dnf install -y \
+  gcc \
+  make \
   curl \
   wget \
   git \
-  make \
   ca-certificates \
-  apt-transport-https \
-  gnupg \
-  lsb-release \
-  software-properties-common \
+  gnupg2 \
   python3 \
-  python3-pip
+  python3-pip \
+  jq
+
+# Development tools group (provides compilers, headers, etc.)
+sudo dnf groupinstall -y "Development Tools" || true
 
 # ------------------------------------------------------------
 # Docker (runtime + compose)
 # ------------------------------------------------------------
 echo "=== Installing Docker and Docker Compose ==="
+
+# Remove podman-docker shim if present — it conflicts with Docker CE
+if rpm -q podman-docker &>/dev/null; then
+  echo "Removing podman-docker shim to avoid conflicts with Docker CE..."
+  sudo dnf remove -y podman-docker || true
+fi
+
 if ! command -v docker &> /dev/null; then
-  sudo apt remove -y docker docker-engine docker.io containerd runc || true
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-  sudo apt update -y
-  sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  # Remove any old conflicting packages
+  sudo dnf remove -y docker docker-client docker-client-latest docker-common \
+    docker-latest docker-latest-logrotate docker-logrotate docker-engine \
+    podman runc || true
+
+  # Add Docker CE repository for RHEL 8
+  sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+
+  sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
 # ------------------------------------------------------------
@@ -78,12 +96,10 @@ fi
 echo "=== Checking Docker Compose ==="
 if ! docker compose version &> /dev/null; then
   echo "Docker Compose plugin not found — installing..."
-  sudo apt update -y
-  sudo apt install -y docker-compose-plugin
+  sudo dnf install -y docker-compose-plugin
 else
   echo "Docker Compose already installed — $(docker compose version)"
 fi
-
 
 sudo systemctl enable --now docker
 REAL_USER="${SUDO_USER:-$USER}"
@@ -95,8 +111,8 @@ echo "Added $REAL_USER to the docker group — log out and back in for this to t
 # ------------------------------------------------------------
 echo "=== Installing Node.js (LTS) ==="
 if ! command -v node &> /dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-  sudo apt install -y nodejs
+  curl -fsSL https://rpm.nodesource.com/setup_lts.x | sudo bash -
+  sudo dnf install -y nodejs
 fi
 
 echo "=== Installing nvm (Node Version Manager) ==="
@@ -123,12 +139,12 @@ if ! command -v go &> /dev/null; then
   echo "Go installed: $(go version)"
 fi
 
-
 # ------------------------------------------------------------
 # mkcert (Local TLS Certificates)
 # ------------------------------------------------------------
 echo "=== Installing mkcert ==="
-sudo apt install -y libnss3-tools
+# nss-tools provides certutil needed by mkcert for NSS database management
+sudo dnf install -y nss-tools
 if ! command -v mkcert &> /dev/null; then
   MKCERT_VERSION=$(curl -fsSL https://api.github.com/repos/FiloSottile/mkcert/releases/latest \
     | grep tag_name | cut -d'"' -f4)
@@ -223,5 +239,3 @@ echo "1. Reboot or log out/in for Docker group and ~/.bashrc changes to take eff
 echo "2. Continue to Step 1 in startupInstructions.md/README.md to start the COP services."
 echo ""
 echo "===================================="
-
-
