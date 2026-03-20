@@ -397,6 +397,16 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     die "Docker daemon is not accessible.\nOn Linux, run: newgrp docker  (or log out and back in)\nThen re-run with: --skip-prereqs"
   fi
 
+  # On macOS Monterey+, AirPlay Receiver listens on port 5000 by default.
+  # It returns 403 Forbidden to non-AirPlay requests, which breaks registry pushes.
+  # Detect this before starting the registry so the user gets a clear error.
+  if [[ "$OS" == "darwin" ]]; then
+    REGISTRY_CHECK=$(curl -fsSL --max-time 3 http://localhost:5000/v2/ 2>&1 || true)
+    if echo "$REGISTRY_CHECK" | grep -q "403\|Forbidden\|AirPlay\|RTSP"; then
+      die "Port 5000 is in use by macOS AirPlay Receiver, which conflicts with the local Docker registry.\n\nTo fix: System Settings → General → AirDrop & Handoff → turn off 'AirPlay Receiver'\n\nThen re-run this script."
+    fi
+  fi
+
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^registry$"; then
     log_ok "Registry container already running"
   elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^registry$"; then
@@ -407,6 +417,16 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_info "Starting new registry container..."
     docker run -d --restart=always -p 5000:5000 --name registry registry:2
     log_ok "Registry started"
+  fi
+
+  # Verify the registry is responding correctly (not intercepted by AirPlay or another process)
+  REGISTRY_V2=$(curl -fsSL --max-time 5 http://localhost:5000/v2/ 2>/dev/null || echo "")
+  if ! echo "$REGISTRY_V2" | grep -q "{}"; then
+    if [[ "$OS" == "darwin" ]]; then
+      die "Local registry on port 5000 is not responding as a Docker registry.\n\nIf you are on macOS Monterey or later, AirPlay Receiver may be using port 5000.\nTo fix: System Settings → General → AirDrop & Handoff → turn off 'AirPlay Receiver'\n\nThen re-run this script."
+    else
+      die "Local registry on port 5000 is not responding as a Docker registry.\nCheck that the registry container started correctly: docker logs registry"
+    fi
   fi
 
   # Check DSP image is present; prompt for bundle path if not
@@ -470,8 +490,11 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   log_section "Detecting DSP image version"
 
+  # Filter to version tags only (e.g. v2.7.4) — the registry also contains SBOM/attestation
+  # tags like "sbom-sha256-....att" which sort after version tags alphabetically and would
+  # cause a mismatch if selected as the DSP_IMAGE build arg.
   DSP_TAG=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list 2>/dev/null \
-    | jq -r '.tags | sort | last' 2>/dev/null || echo "")
+    | jq -r '.tags | map(select(test("^v[0-9]"))) | sort | last' 2>/dev/null || echo "")
 
   if [[ -z "$DSP_TAG" || "$DSP_TAG" == "null" ]]; then
     die "Could not detect DSP image tag from local registry.\nMake sure the registry is running and the image has been loaded."

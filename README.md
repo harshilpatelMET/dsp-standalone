@@ -40,6 +40,8 @@ NOTE: This setup instance uses default usernames and credentials and should not 
 
 > **Docker Desktop on Apple Silicon:** If you use Docker Desktop instead of OrbStack, you must enable Rosetta emulation: **Docker Desktop → Settings → General → "Use Rosetta for x86/amd64 emulation on Apple Silicon"**. Without it, the `linux/amd64` DSP images will run under QEMU and be significantly slower, likely causing startup timeouts. Additionally, `network_mode: host` behaves differently under Docker Desktop — if services are unreachable, add explicit `ports:` mappings to `keycloak` and `dsp` in `docker-compose.yaml`.
 
+> **macOS AirPlay Receiver conflict (port 5000):** macOS Monterey and later run an AirPlay Receiver that listens on port 5000 by default. This conflicts with the local Docker registry used by this stack. If you see `403 Forbidden` errors when loading the DSP image, disable AirPlay Receiver: **System Settings → General → AirDrop & Handoff → turn off "AirPlay Receiver"**, then re-run the setup script.
+
 ---
 
 ## Prerequisites
@@ -271,6 +273,8 @@ docker compose up -d
 ## Running the Stack
 
 All commands run from the `DSP-standalone/` directory.
+
+> **macOS + OrbStack tip:** Once `setup_and_validate.sh` has completed successfully at least once, you do not need to re-run it to start or stop the stack. In the OrbStack UI, find the **`virtru-dsp-only`** container group and click the play button to start it or the stop button to stop it. OrbStack remembers the compose project and all its configuration, so this is the easiest way to manage the stack day-to-day.
 
 ### Start
 
