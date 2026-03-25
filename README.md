@@ -506,12 +506,54 @@ Keycloak Admin Console: `https://local-dsp.virtru.com:18443/auth`
 
 - Verify `dsp-keys/local-dsp.virtru.com.pem` and `.key.pem` exist and are readable.
 - Check Keycloak-DB is healthy: `docker compose ps keycloak-db`
+- Check Keycloak logs for the root cause: `docker logs virtru-dsp-only-keycloak-1`
+
+**Linux / CentOS / RHEL — TLS key permissions**
+
+`mkcert` generates the private key with `0600` permissions. Keycloak runs as UID 1000 inside the container and cannot read a root-owned `0600` file through a Linux bind mount. `setup_and_validate.sh` fixes this automatically, but if keys were generated manually run:
+
+```bash
+chmod 0644 dsp-keys/local-dsp.virtru.com.key.pem
+docker compose restart keycloak
+```
+
+**Linux / CentOS / RHEL — firewalld blocking DB port**
+
+Keycloak (`network_mode: host`) connects to `keycloak-db` (bridge network) at `localhost:25434`. Firewalld can block this traffic. `setup_and_validate.sh` adds `docker0` to the trusted zone automatically, but to fix manually:
+
+```bash
+sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0
+sudo firewall-cmd --reload
+docker compose restart keycloak
+```
+
+**CentOS / RHEL — nftables/iptables conflict**
+
+CentOS 8 defaults to nftables; Docker requires iptables. If Docker's NAT rules are silently ignored, containers cannot communicate. `setup_and_validate.sh` detects and switches automatically, but to fix manually:
+
+```bash
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+sudo systemctl restart docker
+docker compose up -d
+```
 
 ### DSP fails to start or stays unhealthy
 
 - Confirm `local-dsp.virtru.com` resolves to `127.0.0.1`: `ping local-dsp.virtru.com`
 - Confirm all KAS key files exist in `dsp-keys/`.
-- Check DSP logs: `docker compose logs dsp`
+- Check DSP logs: `docker logs virtru-dsp-only-dsp-1`
+
+**Linux / CentOS / RHEL — KAS key permissions**
+
+`openssl` generates private keys with `0600` permissions. The DSP container runs as a non-root user and cannot read these files through a Linux bind mount. `setup_and_validate.sh` fixes this automatically, but to fix manually:
+
+```bash
+chmod 0644 dsp-keys/kas-private.pem dsp-keys/kas-ec-private.pem dsp-keys/policyimportexport/cosign.key
+docker compose restart dsp
+```
+
+> **Note:** Setting private keys to `0644` is safe for local development only. Do not use in production.
 
 ### Provisioning container exits non-zero
 
@@ -519,6 +561,10 @@ Keycloak Admin Console: `https://local-dsp.virtru.com:18443/auth`
 - Re-run provisioning manually after DSP is healthy:
   ```bash
   docker compose run --rm dsp-keycloak-provisioning
+  ```
+- Re-run federal policy provisioning manually:
+  ```bash
+  docker compose run --rm dsp-provision-federal-policy
   ```
 
 ### Port conflicts
@@ -531,6 +577,15 @@ DSP_KEYCLOAK_DB_PORT=25435 docker compose up
 ```
 
 (Requires adding environment variable substitution to the compose file for your specific port.)
+
+### Linux — Docker build fails with "apk add: exit code 255"
+
+Docker containers cannot resolve external DNS. `setup_and_validate.sh` detects and configures this automatically, but to fix manually:
+
+```bash
+echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
 
 ---
 
