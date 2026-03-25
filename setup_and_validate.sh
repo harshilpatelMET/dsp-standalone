@@ -368,12 +368,18 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
       local-dsp.virtru.com "*.local-dsp.virtru.com" localhost
     log_ok "TLS certificate generated"
   fi
-  # On Linux, mkcert generates the key with 0600 (owner-read only). Keycloak runs as
-  # UID 1000 inside the container and cannot read a root-owned 0600 file via bind mount.
-  # Set key to 0644 so the container user can read it. Safe for local dev only.
+  # On Linux, mkcert and openssl generate private keys with 0600 (owner-read only).
+  # Containers run as non-root users and cannot read root-owned 0600 files via bind mount.
+  # Set all keys in dsp-keys/ to 0644 so container users can read them.
+  # Safe for local dev only — do not use in production.
   if [[ "$OS" == "linux" ]]; then
-    chmod 0644 dsp-keys/local-dsp.virtru.com.key.pem 2>/dev/null \
-      && log_ok "TLS key permissions set to 0644 (required for container read access on Linux)"
+    chmod 0644 \
+      dsp-keys/local-dsp.virtru.com.key.pem \
+      dsp-keys/kas-private.pem \
+      dsp-keys/kas-ec-private.pem \
+      dsp-keys/policyimportexport/cosign.key \
+      2>/dev/null
+    log_ok "dsp-keys/ private key permissions set to 0644 (required for container read access on Linux)"
   fi
 
   # KAS RSA key pair
