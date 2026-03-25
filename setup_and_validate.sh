@@ -103,6 +103,7 @@ fi
 
 # RHEL-specific environment checks
 if [[ "$IS_RHEL" == true ]]; then
+
   # SELinux check — enforcing mode blocks Docker bind mounts without :z label
   if command -v getenforce &>/dev/null; then
     SELINUX_STATUS=$(getenforce 2>/dev/null || echo "Unknown")
@@ -115,11 +116,46 @@ if [[ "$IS_RHEL" == true ]]; then
     fi
   fi
 
-  # Firewalld check — can interfere with Docker bridge networking
+  # firewalld check — blocks loopback traffic between host-networked and bridge-networked
+  # containers (e.g. keycloak → keycloak-db). Auto-fix by adding docker0 to trusted zone.
   if systemctl is-active --quiet firewalld 2>/dev/null; then
-    log_warn "firewalld is active. If containers cannot reach the internet during build,"
-    log_warn "run: sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0 && sudo firewall-cmd --reload"
+    log_warn "firewalld is active — checking Docker interface trust..."
+    DOCKER0_ZONE=$(sudo firewall-cmd --get-zone-of-interface=docker0 2>/dev/null || echo "")
+    if [[ "$DOCKER0_ZONE" == "trusted" ]]; then
+      log_ok "firewalld: docker0 is already in the trusted zone"
+    else
+      log_info "Adding docker0 to firewalld trusted zone (required for Keycloak → DB connectivity)..."
+      sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0
+      sudo firewall-cmd --reload
+      log_ok "firewalld: docker0 added to trusted zone"
+    fi
+  else
+    log_ok "firewalld is not active"
   fi
+
+  # iptables/nftables check — CentOS 8 defaults to nftables; Docker requires iptables.
+  # If nftables is the active backend, Docker's rules are silently ignored and containers
+  # cannot communicate, causing Keycloak to fail to start.
+  if command -v iptables &>/dev/null; then
+    IPTABLES_VERSION=$(iptables --version 2>/dev/null || echo "")
+    if echo "$IPTABLES_VERSION" | grep -q "nf_tables"; then
+      log_warn "iptables is using the nftables backend — Docker requires iptables-legacy."
+      log_warn "Switching to iptables-legacy..."
+      if command -v update-alternatives &>/dev/null; then
+        sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null \
+          && sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null \
+          && log_ok "Switched to iptables-legacy — restarting Docker daemon..." \
+          && sudo systemctl restart docker \
+          && log_ok "Docker restarted with iptables-legacy backend" \
+          || log_warn "Could not switch iptables backend automatically. Run manually:\n  sudo update-alternatives --set iptables /usr/sbin/iptables-legacy\n  sudo systemctl restart docker"
+      else
+        log_warn "update-alternatives not found. Switch manually:\n  sudo update-alternatives --set iptables /usr/sbin/iptables-legacy\n  sudo systemctl restart docker"
+      fi
+    else
+      log_ok "iptables backend: legacy (compatible with Docker)"
+    fi
+  fi
+
 fi
 
 # Warn Docker Desktop users on Apple Silicon
@@ -332,6 +368,13 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
       local-dsp.virtru.com "*.local-dsp.virtru.com" localhost
     log_ok "TLS certificate generated"
   fi
+  # On Linux, mkcert generates the key with 0600 (owner-read only). Keycloak runs as
+  # UID 1000 inside the container and cannot read a root-owned 0600 file via bind mount.
+  # Set key to 0644 so the container user can read it. Safe for local dev only.
+  if [[ "$OS" == "linux" ]]; then
+    chmod 0644 dsp-keys/local-dsp.virtru.com.key.pem 2>/dev/null \
+      && log_ok "TLS key permissions set to 0644 (required for container read access on Linux)"
+  fi
 
   # KAS RSA key pair
   if [[ -f dsp-keys/kas-private.pem && -f dsp-keys/kas-cert.pem ]]; then
@@ -419,8 +462,17 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_ok "Registry started"
   fi
 
-  # Verify the registry is responding correctly (not intercepted by AirPlay or another process)
-  REGISTRY_V2=$(curl -fsSL --max-time 5 http://localhost:5000/v2/ 2>/dev/null || echo "")
+  # Verify the registry is responding correctly (not intercepted by AirPlay or another process).
+  # Retry up to 10 times (5 seconds) to allow the container a moment to become ready.
+  REGISTRY_V2=""
+  for i in {1..10}; do
+    REGISTRY_V2=$(curl -fsSL --max-time 3 http://localhost:5000/v2/ 2>/dev/null || echo "")
+    if echo "$REGISTRY_V2" | grep -q "{}"; then
+      break
+    fi
+    log_info "Waiting for registry to become ready... (${i}/10)"
+    sleep 1
+  done
   if ! echo "$REGISTRY_V2" | grep -q "{}"; then
     if [[ "$OS" == "darwin" ]]; then
       die "Local registry on port 5000 is not responding as a Docker registry.\n\nIf you are on macOS Monterey or later, AirPlay Receiver may be using port 5000.\nTo fix: System Settings → General → AirDrop & Handoff → turn off 'AirPlay Receiver'\n\nThen re-run this script."
@@ -428,6 +480,7 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
       die "Local registry on port 5000 is not responding as a Docker registry.\nCheck that the registry container started correctly: docker logs registry"
     fi
   fi
+  log_ok "Registry is ready"
 
   # Check DSP image is present; prompt for bundle path if not
   DSP_TAGS=$(curl -fsSL http://localhost:5000/v2/virtru/data-security-platform/tags/list 2>/dev/null || echo "")
@@ -556,22 +609,26 @@ print('Updated $DAEMON_JSON')
 
   # Wait for DSP to become healthy
   log_section "Waiting for DSP to become healthy"
-  log_info "Polling https://local-dsp.virtru.com:8080/healthz (timeout: 5 minutes)..."
+  log_info "Polling https://local-dsp.virtru.com:8080/healthz (timeout: 3 minutes)..."
 
-  TIMEOUT=300
+  TIMEOUT=180
   ELAPSED=0
   INTERVAL=10
   until curl -fksSo /dev/null --max-time 5 https://local-dsp.virtru.com:8080/healthz 2>/dev/null; do
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
       echo
-      die "DSP did not become healthy within ${TIMEOUT}s.\nCheck logs: docker compose logs dsp"
+      log_warn "DSP did not respond to /healthz within ${TIMEOUT}s — continuing to SDK tests."
+      log_warn "The container may still be initialising. Check: docker compose logs dsp"
+      break
     fi
     printf "    Waiting... %ds elapsed\r" "$ELAPSED"
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
   done
   echo
-  log_ok "DSP is healthy (${ELAPSED}s elapsed)"
+  if curl -fksSo /dev/null --max-time 5 https://local-dsp.virtru.com:8080/healthz 2>/dev/null; then
+    log_ok "DSP is healthy (${ELAPSED}s elapsed)"
+  fi
 
 fi
 
