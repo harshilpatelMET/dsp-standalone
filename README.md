@@ -67,31 +67,27 @@ The script will:
 
 | Flag | Effect |
 |---|---|
-| *(none)* | Full run: prereqs → keys → build → stack → validate → **SDK tests** |
+| *(none)* | Full run: prereqs → keys → build → stack → infra checks → **SDK tests** |
 | `--skip-prereqs` | Skip tool installation; still validates tools are present |
 | `--no-build` | Start stack using cached images — skips `docker compose build` (faster on repeat runs) |
-| `--validate-only` | Run infra validation checks only against an already-running stack (no setup or start) |
-| `--sdk-validation` | After infra validation, build and run the three Go SDK test programs |
-| `--sdk-only` | Run the Go SDK tests only — skips all infra validation checks |
+| `--validate-only` | Run infra checks + SDK validation against an already-running stack (no setup or start) |
+| `--sdk-only` | Run the Go SDK tests only — skips setup and all infra validation checks |
 
-> **SDK tests run by default.** When no flags are passed, the Go SDK tests run automatically at the end of the full validation suite. Pass explicit flags to control this behaviour.
+> **SDK tests and infra checks run by default.** Every run includes both infra validation and the Go SDK tests. Use `--sdk-only` to skip infra checks and setup entirely.
 
 Flags can be combined:
 
 ```bash
-# Full run — includes SDK tests automatically (no flags needed)
+# Full run — prereqs + infra checks + SDK tests (default)
 ./setup_and_validate.sh
 
-# Validate a running stack AND run SDK tests
-./setup_and_validate.sh --validate-only --sdk-validation
-
-# Validate a running stack WITHOUT SDK tests
+# Validate a running stack with infra checks + SDK tests
 ./setup_and_validate.sh --validate-only
 
-# Run only the Go SDK tests (fastest — skips all infra checks)
+# Run only the Go SDK tests (fastest — skips setup and infra checks)
 ./setup_and_validate.sh --sdk-only
 
-# Skip prereqs and skip rebuild (fastest repeat run, includes SDK tests)
+# Skip prereqs and skip rebuild (fastest repeat run, includes infra checks + SDK tests)
 ./setup_and_validate.sh --skip-prereqs --no-build
 ```
 
@@ -350,18 +346,19 @@ If you used `setup_and_validate.sh` for setup, validation runs automatically at 
 
 The script runs all checks below and prints a pass/fail summary.
 
-#### SDK validation (`--sdk-validation` / `--sdk-only`)
+#### SDK validation
 
-Two flags control Go SDK testing:
+SDK tests run by default in every mode. Use `--sdk-only` to skip infra checks and run only the SDK tests:
 
-| Flag | Infra checks | SDK tests |
+| Mode | Infra checks | SDK tests |
 |---|---|---|
-| `--sdk-validation` | Yes | Yes |
+| *(default)* | Yes | Yes |
+| `--validate-only` | Yes | Yes |
 | `--sdk-only` | No | Yes |
 
 ```bash
-# Validate stack + run Go SDK tests
-./setup_and_validate.sh --validate-only --sdk-validation
+# Validate stack + run Go SDK tests (default — no flag needed)
+./setup_and_validate.sh --validate-only
 
 # Run only the Go SDK tests (skip infra checks)
 ./setup_and_validate.sh --sdk-only
@@ -1038,8 +1035,8 @@ The three Go programs below can be run individually (see each section) or all to
 | Command | What runs |
 |---|---|
 | `./setup_and_validate.sh` | Full setup + infra checks + Go SDK tests (default) |
-| `./setup_and_validate.sh --validate-only --sdk-validation` | Infra checks + Go SDK tests |
-| `./setup_and_validate.sh --sdk-only` | Go SDK tests only (fastest) |
+| `./setup_and_validate.sh --validate-only` | Infra checks + Go SDK tests (no setup) |
+| `./setup_and_validate.sh --sdk-only` | Go SDK tests only — skips setup and infra checks (fastest) |
 
 ### toySDK.go
 

@@ -21,8 +21,8 @@ set +e  # do not exit on individual step failures — setup_and_validate.sh hand
 # ------------------------------------------------------------
 ARCH_RAW=$(uname -m)
 case "$ARCH_RAW" in
-  x86_64)        HOST_ARCH="amd64" ;;
-  aarch64|arm64) HOST_ARCH="arm64" ;;
+  x86_64)        HOST_ARCH="amd64"; GRPCURL_ARCH="x86_64" ;;
+  aarch64|arm64) HOST_ARCH="arm64"; GRPCURL_ARCH="arm64" ;;
   *) echo "Unsupported architecture: $ARCH_RAW"; exit 1 ;;
 esac
 CONTAINER_ARCH="amd64"
@@ -205,9 +205,9 @@ echo "Unpacking DSP binary: $DSP_TAR"
 tar -xvf "$DSP_TAR"
 
 # Unpack grpcurl — uses HOST_ARCH (native binary for this machine)
-GRPCURL_TAR=$(ls tools/grpcurl/grpcurl_*_linux_${HOST_ARCH}.tar.gz 2>/dev/null | head -1)
+GRPCURL_TAR=$(ls tools/grpcurl/grpcurl_*_linux_${GRPCURL_ARCH}.tar.gz 2>/dev/null | head -1)
 if [[ -z "$GRPCURL_TAR" ]]; then
-  echo "ERROR: Could not find grpcurl for linux/${HOST_ARCH} in tools/grpcurl/"
+  echo "ERROR: Could not find grpcurl for linux/${GRPCURL_ARCH} in tools/grpcurl/"
   exit 1
 fi
 echo "Unpacking grpcurl: $GRPCURL_TAR"

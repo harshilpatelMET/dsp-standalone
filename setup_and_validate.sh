@@ -8,13 +8,11 @@
 # Supports: macOS (Intel + Apple Silicon), Ubuntu/Debian Linux (amd64 + arm64)
 #
 # Usage:
-#   ./setup_and_validate.sh                              # full run (with --build) + SDK validation
+#   ./setup_and_validate.sh                              # full run: prereqs + infra checks + SDK validation
 #   ./setup_and_validate.sh --skip-prereqs               # skip tool installs, go straight to keys/stack
 #   ./setup_and_validate.sh --no-build                   # start stack using cached images (no --build)
-#   ./setup_and_validate.sh --validate-only              # validate a running stack (no setup)
-#   ./setup_and_validate.sh --sdk-validation             # also build and run Go SDK test programs
-#   ./setup_and_validate.sh --validate-only --sdk-validation  # validate + SDK tests only
-#   ./setup_and_validate.sh --sdk-only                   # run Go SDK tests only (skip infra checks)
+#   ./setup_and_validate.sh --validate-only              # infra checks + SDK validation (no setup)
+#   ./setup_and_validate.sh --sdk-only                   # run Go SDK tests only (skip setup + infra checks)
 # =============================================================================
 
 set -euo pipefail
@@ -24,7 +22,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SKIP_PREREQS=false
 VALIDATE_ONLY=false
-SDK_VALIDATION=false
+SDK_VALIDATION=true
 SDK_ONLY=false
 NO_BUILD=false
 for arg in "$@"; do
@@ -36,11 +34,6 @@ for arg in "$@"; do
     --no-build)        NO_BUILD=true ;;
   esac
 done
-
-# Default: run SDK validation when no flags are passed
-if [[ $# -eq 0 ]]; then
-  SDK_VALIDATION=true
-fi
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -263,6 +256,15 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
     log_section "Validating installed tools"
     validate_tools
+
+    # On Linux, Docker group membership requires a new login session to take
+    # effect. The prereqs script runs in a subshell, so the group change never
+    # propagates back here. Exit early with a clear message rather than
+    # proceeding through key generation only to die at the registry step.
+    if [[ "$OS" == "linux" ]] && ! docker info &>/dev/null 2>&1; then
+      echo
+      die "Docker was installed but is not accessible in this session.\n\nThe docker group change requires a new login session to take effect.\n\nNext steps:\n  1. Run:  newgrp docker\n     (opens a new shell with the docker group active)\n  2. Then re-run:  ./setup_and_validate.sh --skip-prereqs\n\nOr log out and back in, then re-run with --skip-prereqs."
+    fi
 
   else
 
