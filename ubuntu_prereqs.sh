@@ -168,10 +168,13 @@ echo ""
 echo "  The Virtru DSP bundle is a .tar.gz file (e.g. virtru-dsp-bundle-X.X.X.tar.gz)."
 echo ""
 
+# Use the real user's home directory — $HOME resolves to /root when run with sudo
+REAL_HOME=$(eval echo "~${SUDO_USER:-$USER}")
+
 BUNDLE_TAR=""
 while true; do
   read -rp "  Enter path to the Virtru DSP bundle .tar.gz file: " BUNDLE_TAR
-  BUNDLE_TAR="${BUNDLE_TAR/#\~/$HOME}"
+  BUNDLE_TAR="${BUNDLE_TAR/#\~/$REAL_HOME}"
   if [[ -z "$BUNDLE_TAR" ]]; then
     echo "  Path cannot be empty."
     continue
@@ -185,7 +188,11 @@ done
 
 echo "Unpacking bundle: $BUNDLE_TAR"
 mkdir -p virtru-dsp-bundle
-tar -xvf "$BUNDLE_TAR" -C virtru-dsp-bundle/
+if ! tar -xvf "$BUNDLE_TAR" -C virtru-dsp-bundle/; then
+  echo "ERROR: Failed to extract bundle: $BUNDLE_TAR"
+  echo "Ensure the file is a valid .tar.gz archive and is not corrupted."
+  exit 1
+fi
 cd virtru-dsp-bundle/
 
 # Unpack DSP binary — uses HOST_ARCH (native binary for this machine)
