@@ -440,6 +440,43 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_ok "encrypted-search.key written"
   fi
 
+  # --- Docker DNS check (Linux only) ----------------------------------------
+  # Must run BEFORE starting the registry or loading the DSP image.
+  # Ubuntu uses systemd-resolved (127.0.0.53) which Docker containers cannot
+  # reach. Fixing DNS requires restarting the Docker daemon, which wipes any
+  # in-memory registry data — so we fix DNS first, then start the registry.
+  if [[ "$OS" == "linux" ]]; then
+    log_section "Docker DNS check (Linux)"
+    DAEMON_JSON="/etc/docker/daemon.json"
+    DNS_OK=false
+    if docker run --rm --network bridge alpine:latest nslookup dl-cdn.alpinelinux.org &>/dev/null 2>&1; then
+      DNS_OK=true
+    fi
+    if [[ "$DNS_OK" == false ]]; then
+      log_warn "Docker containers cannot resolve DNS — configuring daemon DNS (8.8.8.8, 1.1.1.1)..."
+      if [[ -f "$DAEMON_JSON" ]]; then
+        sudo python3 -c "
+import json, sys
+with open('$DAEMON_JSON') as f:
+    d = json.load(f)
+d['dns'] = ['8.8.8.8', '1.1.1.1']
+with open('$DAEMON_JSON', 'w') as f:
+    json.dump(d, f, indent=2)
+print('Updated $DAEMON_JSON')
+"
+      else
+        echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee "$DAEMON_JSON" > /dev/null
+        log_ok "Created $DAEMON_JSON with DNS servers"
+      fi
+      log_info "Restarting Docker daemon to apply DNS settings..."
+      sudo systemctl restart docker
+      sleep 3
+      log_ok "Docker daemon restarted — DNS set to 8.8.8.8, 1.1.1.1"
+    else
+      log_ok "Docker container DNS is working"
+    fi
+  fi
+
   # --- Local Docker registry ------------------------------------------------
   log_section "Local Docker registry (port 5000)"
 
@@ -563,44 +600,6 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   DSP_IMAGE="localhost:5000/virtru/data-security-platform:${DSP_TAG}"
   log_ok "DSP image: $DSP_IMAGE"
-
-  # --- Docker DNS check (Linux only) ----------------------------------------
-  # Ubuntu uses systemd-resolved (127.0.0.53) which Docker containers cannot
-  # reach. If the Docker daemon has no explicit DNS configured, Alpine builds
-  # fail with "apk add: exit code 255" (network error).
-  if [[ "$OS" == "linux" ]]; then
-    log_section "Docker DNS check (Linux)"
-    DAEMON_JSON="/etc/docker/daemon.json"
-    DNS_OK=false
-    # Test if containers can resolve DNS by running a quick nslookup
-    if docker run --rm --network bridge alpine:latest nslookup dl-cdn.alpinelinux.org &>/dev/null 2>&1; then
-      DNS_OK=true
-    fi
-    if [[ "$DNS_OK" == false ]]; then
-      log_warn "Docker containers cannot resolve DNS — configuring daemon DNS (8.8.8.8, 1.1.1.1)..."
-      if [[ -f "$DAEMON_JSON" ]]; then
-        # File exists — merge dns field using Python (available on Ubuntu)
-        sudo python3 -c "
-import json, sys
-with open('$DAEMON_JSON') as f:
-    d = json.load(f)
-d['dns'] = ['8.8.8.8', '1.1.1.1']
-with open('$DAEMON_JSON', 'w') as f:
-    json.dump(d, f, indent=2)
-print('Updated $DAEMON_JSON')
-"
-      else
-        echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee "$DAEMON_JSON" > /dev/null
-        log_ok "Created $DAEMON_JSON with DNS servers"
-      fi
-      log_info "Restarting Docker daemon to apply DNS settings..."
-      sudo systemctl restart docker
-      sleep 3
-      log_ok "Docker daemon restarted — DNS set to 8.8.8.8, 1.1.1.1"
-    else
-      log_ok "Docker container DNS is working"
-    fi
-  fi
 
   log_section "Starting Docker Compose stack"
 
