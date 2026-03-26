@@ -86,8 +86,8 @@ services:
       KC_FEATURES: "preview,token-exchange"
       KC_HEALTH_ENABLED: "true"
     volumes:
-      - ./dsp-keys/local-dsp.virtru.com.pem:/opt/keycloak/conf/local-dsp.virtru.com.pem
-      - ./dsp-keys/local-dsp.virtru.com.key.pem:/opt/keycloak/conf/local-dsp.virtru.com.key.pem
+      - ./dsp-keys/local-dsp.virtru.com.pem:/opt/keycloak/conf/local-dsp.virtru.com.pem:z
+      - ./dsp-keys/local-dsp.virtru.com.key.pem:/opt/keycloak/conf/local-dsp.virtru.com.key.pem:z
     depends_on:
       keycloak-db:
         condition: service_healthy
@@ -108,6 +108,7 @@ services:
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
+      network: host
     command:
       - tructl
       - provision
@@ -148,11 +149,12 @@ services:
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
+      network: host
     command: ["start"]
     network_mode: host
     restart: always
     volumes:
-      - ./dsp-keys:/dsp-keys
+      - ./dsp-keys:/dsp-keys:z
     environment:
       DSP_DB_HOST: localhost
       DSP_DB_PORT: 35433
@@ -171,7 +173,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - curl -fkSs --max-time 5 https://local-dsp.virtru.com:8080/healthz >/dev/null || exit 1
+        - curl -fkSs --max-time 5 https://local-dsp.virtru.com:8080/healthz >/dev/null 2>&1 || bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' 2>/dev/null
       interval: 10s
       timeout: 10s
       retries: 18
@@ -185,6 +187,7 @@ services:
     build:
       context: .
       dockerfile: ./dev.dsp.Dockerfile
+      network: host
     command:
       - tructl
       - provision
