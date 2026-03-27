@@ -170,6 +170,18 @@ cd "$SCRIPT_DIR"
 log_ok "Working directory: $SCRIPT_DIR"
 
 # ---------------------------------------------------------------------------
+# Compose file selection — OS-aware healthcheck override
+# macOS uses the Java-based HTTP check on port 8888 (reliable in start-dev).
+# Linux (Ubuntu + RHEL/CentOS) uses the Keycloak 25+ management port (9000).
+# ---------------------------------------------------------------------------
+if [[ "$OS" == "darwin" ]]; then
+  export COMPOSE_FILE="docker-compose.yaml:docker-compose.mac.yml"
+  log_ok "Compose: using macOS override (docker-compose.mac.yml)"
+else
+  export COMPOSE_FILE="docker-compose.yaml"
+fi
+
+# ---------------------------------------------------------------------------
 # Helper: validate required tools are present after prereqs run
 # ---------------------------------------------------------------------------
 REQUIRED_TOOLS=(docker jq mkcert cosign openssl curl)
@@ -370,20 +382,6 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
       local-dsp.virtru.com "*.local-dsp.virtru.com" localhost
     log_ok "TLS certificate generated"
   fi
-  # On Linux, mkcert and openssl generate private keys with 0600 (owner-read only).
-  # Containers run as non-root users and cannot read root-owned 0600 files via bind mount.
-  # Set all keys in dsp-keys/ to 0644 so container users can read them.
-  # Safe for local dev only — do not use in production.
-  if [[ "$OS" == "linux" ]]; then
-    chmod 0644 \
-      dsp-keys/local-dsp.virtru.com.key.pem \
-      dsp-keys/kas-private.pem \
-      dsp-keys/kas-ec-private.pem \
-      dsp-keys/policyimportexport/cosign.key \
-      2>/dev/null
-    log_ok "dsp-keys/ private key permissions set to 0644 (required for container read access on Linux)"
-  fi
-
   # KAS RSA key pair
   if [[ -f dsp-keys/kas-private.pem && -f dsp-keys/kas-cert.pem ]]; then
     log_ok "KAS RSA keys already exist — skipping"
@@ -438,6 +436,20 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     printf '%s' '49e9a28af998c2678e6651ad4e60a2dbba2f3d284f58b224b3382919c1de7d55' \
       > dsp-keys/encrypted-search.key
     log_ok "encrypted-search.key written"
+  fi
+
+  # On Linux, mkcert and openssl generate private keys with 0600 (owner-read only).
+  # Containers run as non-root users and cannot read root-owned 0600 files via bind mount.
+  # Set all keys in dsp-keys/ to 0644 so container users can read them.
+  # Done after all keys are generated so every file exists before chmod runs.
+  # Safe for local dev only — do not use in production.
+  if [[ "$OS" == "linux" ]]; then
+    chmod 0644 \
+      dsp-keys/local-dsp.virtru.com.key.pem \
+      dsp-keys/kas-private.pem \
+      dsp-keys/kas-ec-private.pem \
+      dsp-keys/policyimportexport/cosign.key
+    log_ok "dsp-keys/ private key permissions set to 0644 (required for container read access on Linux)"
   fi
 
   # --- Docker DNS check (Linux only) ----------------------------------------
@@ -603,6 +615,21 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
 
   log_section "Starting Docker Compose stack"
 
+  # On Linux, strip the 'sharepoint' block from dsp.yaml before the build —
+  # this DSP version does not recognise 'encryptedSearchKeyPath' and refuses
+  # to start with a config validation error. The host file is restored after
+  # the build so macOS checkouts are unaffected.
+  if [[ "$OS" == "linux" ]]; then
+    cp dsp.yaml dsp.yaml.bak
+    python3 -c "
+import re, sys
+content = open('dsp.yaml').read()
+content = re.sub(r'\n  sharepoint:\n(?:    [^\n]*\n)*', '\n', content)
+open('dsp.yaml', 'w').write(content)
+"
+    log_info "dsp.yaml patched for Linux (sharepoint block removed)"
+  fi
+
   if [[ "$NO_BUILD" == true ]]; then
     log_info "Running: docker compose up -d (--no-build: using cached images)"
     docker compose up -d
@@ -612,6 +639,13 @@ if [[ "$VALIDATE_ONLY" == false ]]; then
     log_info "Running: docker compose up -d"
     docker compose up -d
   fi
+
+  # Restore original dsp.yaml now that the image is built
+  if [[ "$OS" == "linux" && -f dsp.yaml.bak ]]; then
+    mv dsp.yaml.bak dsp.yaml
+    log_info "dsp.yaml restored"
+  fi
+
   log_ok "Stack started in detached mode"
 
   # Wait for DSP to become healthy

@@ -5,7 +5,11 @@
 ARG DSP_IMAGE
 
 # ---------- prep stage: build CA bundle & stage files ----------
-FROM alpine:latest AS prep
+# --platform=$BUILDPLATFORM runs this stage natively on the build host (arm64 or amd64).
+# Without it, platform: linux/amd64 on the service forces the prep stage to run as amd64,
+# which causes "exec /bin/sh: exec format error" on arm64 Linux hosts without QEMU.
+# The final DSP stage still targets linux/amd64 via the service's platform setting.
+FROM --platform=$BUILDPLATFORM alpine:latest AS prep
 WORKDIR /work
 
 # CA tools and trust store

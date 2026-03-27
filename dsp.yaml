@@ -13,7 +13,7 @@ logger:
   output: stdout
 # DB and Server configurations are defaulted for local development
 db:
-  host: dsp-db
+  host: localhost
   port: 35433
   user: postgres
   password: changeme

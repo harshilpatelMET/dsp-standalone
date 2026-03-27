@@ -27,6 +27,11 @@ NOTE: This setup instance uses default usernames and credentials and should not 
 
 > **Experimental Linux support:** Ubuntu 24.04 LTS and RHEL 8 installs are functional but have not been fully validated across all hardware and environment configurations. Please report any issues encountered.
 
+> **Linux restart required after first-time prereqs:** The `ubuntu_prereqs.sh` and `rhel_prereqs.sh` scripts install Docker and add your user to the `docker` group. This group membership does not take effect in the current shell session — **you must log out and log back in (or reboot) before running `setup_and_validate.sh`**. After logging back in, re-run the setup script with `--skip-prereqs` to skip the tool installation step:
+> ```bash
+> ./setup_and_validate.sh --skip-prereqs
+> ```
+
 ### macOS Docker runtime
 
 **OrbStack is the recommended Docker runtime on macOS.** It provides native `host` networking (required by this stack), built-in Rosetta emulation for `linux/amd64` images on Apple Silicon, and faster startup times compared to Docker Desktop.
