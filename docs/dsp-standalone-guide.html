@@ -331,7 +331,12 @@ th { background: var(--code-bg); font-weight: 600; font-size: 12px; text-transfo
 <section id="quickstart">
 <h2>Quick Start (Automated)</h2>
 
-<p><code>setup_and_validate.sh</code> handles everything in a single command:</p>
+<h3>Prerequisites</h3>
+<p><strong>Docker Engine &ge; 24</strong> with <strong>Docker Compose v2</strong> must be installed before running the setup script. The script handles all other tool installation automatically.</p>
+<div class="callout info"><strong>macOS:</strong> <a href="https://orbstack.dev">OrbStack</a> is the recommended Docker runtime. Install it and start it before proceeding. Docker Desktop, Rancher Desktop, and Colima also work &mdash; see <a href="#platforms">Supported Platforms</a> for caveats.</div>
+
+<h3>Installation and Startup</h3>
+<p>With Docker running, the setup script handles tool installation, key generation, Docker registry setup, stack startup, and validation in a single command:</p>
 
 <pre><code># From the DSP-standalone/ directory:
 ./setup_and_validate.sh</code></pre>
